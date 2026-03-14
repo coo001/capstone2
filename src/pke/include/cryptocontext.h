@@ -3606,8 +3606,8 @@ public:
     * @return Refreshed ciphertext.
     */
     Ciphertext<Element> EvalBootstrap(ConstCiphertext<Element>& ciphertext, uint32_t numIterations = 1,
-                                      uint32_t precision = 0) const {
-        return GetScheme()->EvalBootstrap(ciphertext, numIterations, precision);
+                                      uint32_t precision = 0, const PublicKey<DCRTPoly> pk = nullptr) const {
+        return GetScheme()->EvalBootstrap(ciphertext, numIterations, precision, pk);
     }
 
     template <typename VectorDataType>
