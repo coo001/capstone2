@@ -5,6 +5,10 @@
 논문과 동일한 최적화·보안·성능을 갖춘 SHIP 구현이 완성된 것은 아니다.
 OpenFHE의 표준 `EvalBootstrap`은 그대로 두고 `ship::FullBootstrap`을 별도 연구 코드로 제공한다.
 
+현재 기본 경로에는 **회전 결합·분해 재사용·지연 ModDown** 최적화가 적용되어 있다.
+같은 키·입력의 512-slot 실험에서 기존 참조 경로 대비 중앙값 기준 약 2.13배 빨라졌다.
+메모리는 거의 줄지 않았다. 자세한 구성과 측정 한계는 [최적화 기록](OPTIMIZATION.md)에 있다.
+
 ## 재현
 
 OpenFHE 의존성이 준비된 저장소에서 실행한다. 새 clone에는 submodule도 받아야 한다.
@@ -16,13 +20,14 @@ bash research/ship/run-checks.sh
 
 `CMAKE_BIN`, `SHIP_BUILD_DIR`, `SHIP_JOBS`로 CMake 실행 파일, 빌드 경로, 병렬 작업 수를 지정할 수 있다.
 검증 환경은 macOS arm64 / AppleClang 21 / CMake 4.4.4 / 64-bit backend / OpenMP OFF다.
-스크립트는 아래 네 검증 실행 파일을 빌드하고, 오류 발생 시 0이 아닌 상태로 종료한다.
+스크립트는 아래 다섯 검증 실행 파일을 빌드하고, 오류 발생 시 0이 아닌 상태로 종료한다.
 외부의 전체 OpenFHE unit test suite를 실행했다는 의미는 아니다.
 
 | 검증 실행 파일 | 확인하는 내용 |
 | --- | --- |
 | `ship-baseline-checks` | 표준 OpenFHE 부트스트래핑의 정확성과 연산 여유 복구 |
 | `ship-component-checks` | 독립 negacyclic 마스크 oracle 240개, 조건부/블라인드 회전 30개 |
+| `ship-fused-rotation-checks` | 별도 회전 키 없는 평가, 기존 경로 및 평문 oracle과 42개 비교, metadata/입력 보존 |
 | `ship-half-bootstrap-checks` | 실제 sparse-key 암호문의 첫 계수 절반을 슬롯으로 복구, sine 목표 및 메시지 오차 |
 | `ship-full-bootstrap-checks` | 일반 복소 CKKS 입력, dense→sparse 전환, 전체 슬롯 복원, 제곱 및 재부트스트래핑 |
 
@@ -58,8 +63,8 @@ bash research/ship/run-checks.sh
 
 ## 실험 결과
 
-아래는 2026-10-09 최종 통합 검증 실행의 관측값이다. 암호 키와 잡음은 매번 무작위이므로 실행마다 변한다.
-정확한 최종 실행 기록은 `results/full-checks.txt`를 참조한다.
+아래는 2026-10-09 **최적화 전** 전체 경로의 검증 관측값이다. 암호 키와 잡음은 매번 무작위이므로 실행마다 변한다.
+당시 기록은 `results/full-checks.txt`, 최적화 후 통합 검사 기록은 `results/fused-checks.txt`를 참조한다.
 
 전체 경로는 depth 9, scale 50-bit, 첫 모듈러스 60-bit (`γ ≈ 1024`)에서 검사했다.
 각 설정에서 영벡터·복소 상수·마지막 슬롯 impulse·주기 패턴·무작위 복소 입력을 사용했다.
@@ -91,7 +96,7 @@ bash research/ship/run-checks.sh
 - 실수 인코딩으로는 필요한 복소 위상을 보존할 수 없어 `COMPLEX`를 명시했다.
 - half-bootstrap의 초기값에 `-i`가 없으면 목표인 사인 대신 코사인 성분을 복구한다.
 - `KeySwitchCore`는 이미 `PQ→Q` 처리를 하므로 `1/P`를 다시 적용하면 안 된다.
-- 조건부 회전을 단순 ciphertext 곱셈으로 대체하면 추가 깊이가 필요하다. 참조 구현에서는 두 번의 key switch와 별도 회전을 사용한다.
+- 조건부 회전을 단순 ciphertext 곱셈으로 대체하면 추가 깊이가 필요하다. 초기 참조 경로는 두 번의 key switch와 별도 회전을 사용하며, 현재는 이를 결합한 경로도 제공한다.
 - product tree의 피연산자 level을 명시적으로 정렬하고, `FIXEDMANUAL`에서 곱셈 뒤 rescale한다.
 
 첫 복구 실행에서 표준 부트스트래핑은 2048 slots / usable levels 1→10 / 최대 오차 `1.60169e-5`를 보였다.
@@ -101,12 +106,12 @@ half-bootstrap은 512 slots × 3종 입력 / 1→5 limbs / 최대 메시지 오�
 ## 아직 완료하지 않은 연구
 
 1. **원논문과 알고리즘별 대조:** 논문 서지정보와 저자 발표자료, 독립 구현을 참고했다. 이번 환경에서 ePrint 전문 다운로드가 403으로 차단되어 전문 전체와의 대조는 완료하지 못했다. 현재 코드를 논문의 완전한 재현이라고 부르지 않는다.
-2. **fused/hoisted HMuxRot:** 현재 두 key switch와 별도 회전을 하나로 결합하는 최적화가 없다. bottom key switch도 논문의 최적화된 encapsulation과 동일하다고 주장하지 않는다.
+2. **논문 HMuxRot과의 대조:** OpenFHE 위에서 회전 결합·hoisting·지연 ModDown을 구현했지만 논문의 정확한 알고리즘/보안 분석과의 일치는 검증하지 않았다. bottom key switch도 논문의 최적화된 encapsulation과 동일하다고 주장하지 않는다.
 3. **보안 검증:** `HEStd_NotSet`, `N=128/1024`, `h=4/8`은 기능 검사 전용이다. sparse secret 분포, 공개 평가키와 키 전환의 보안 가정, modulus/잡음 예산을 포함한 분석이 필요하다.
 4. **확장 가능한 슬롯 변환과 벤치마크:** 현재 대각선 방식의 큰 메모리/연산 비용을 줄이고, 같은 보안 수준·정밀도·입력 범위에서 OpenFHE baseline과 비교해야 한다.
 5. **일반화:** 부분 packing, 자동 scale 기법, 더 넓은 메시지 범위, 대규모 반복 실행에 대한 검증이 남아 있다.
 
-다음 연구는 입력 오차 예산을 유지하면서 HMuxRot 및 슬롯 변환 비용을 줄인 뒤, 보안 파라미터를 정해 비교하는 순서로 진행한다.
+다음 연구는 여전히 큰 평가키 및 슬롯 변환 메모리를 줄이고, 논문 대조와 보안 파라미터 분석을 거쳐 동일 조건 비교를 수행하는 순서로 진행한다.
 
 ## 참고 자료
 

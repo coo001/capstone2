@@ -1,8 +1,8 @@
 // Correctness prototype for coefficient -> slot SHIP half bootstrapping.
 // Requires FIXEDMANUAL, COMPLEX, full packing and a one-limb sparse-key input.
-// This is not the optimized HMuxRot implementation or a complete slot -> slot bootstrap.
+// The fused path is OpenFHE-specific; paper equivalence/security remain unverified.
 #pragma once
-#include "reference.h"
+#include "fused-rotation.h"
 #include <cmath>
 #include <set>
 
@@ -10,6 +10,7 @@ namespace ship {
 struct FactorKey {
     std::array<CT, 4> selectors;
     BlindKey rotation;
+    FusedBlindKey fusedRotation;
 };
 struct HalfBootstrapKey {
     std::vector<FactorKey> factors;
@@ -18,13 +19,14 @@ struct HalfBootstrapKey {
     std::string inputKeyTag;
     uint32_t slots;
     double gamma;
+    bool useFused;
 };
 
 // Only setup has access to sparse support/signs and the dense output secret.
 inline HalfBootstrapKey MakeHalfBootstrapKey(
     const CC& cc, const KeyPair<DCRTPoly>& outputKey,
     const std::vector<std::pair<uint32_t, int>>& sparseSupport,
-    const std::string& inputKeyTag, double gamma) {
+    const std::string& inputKeyTag, double gamma, bool useFused = true) {
     const uint32_t slots = cc->GetRingDimension() / 2;
     if (gamma <= 0 || !std::isfinite(gamma) || sparseSupport.empty())
         throw std::invalid_argument("invalid half-bootstrap parameters");
@@ -44,17 +46,27 @@ inline HalfBootstrapKey MakeHalfBootstrapKey(
     result.inputKeyTag = inputKeyTag;
     result.slots = slots;
     result.gamma = gamma;
+    result.useFused = useFused;
     std::vector<int32_t> rotations;
     for (uint32_t s = 1; s < slots; s <<= 1) rotations.push_back(-static_cast<int32_t>(s));
-    cc->EvalRotateKeyGen(outputKey.secretKey, rotations);
-    result.conjugation = cc->EvalAutomorphismKeyGen(outputKey.secretKey, {4 * slots - 1});
+    if (!useFused) cc->EvalRotateKeyGen(outputKey.secretKey, rotations);
+    const uint32_t conjugationIndex = 4*slots-1;
+    cc->EvalAutomorphismKeyGen(outputKey.secretKey, {conjugationIndex});
+    // Repeated setup can return no newly generated keys when the index is cached.
+    // Keep our own one-entry map instead of relying on that incremental result.
+    result.conjugation = std::make_shared<std::map<uint32_t,EvalKey<DCRTPoly>>>();
+    result.conjugation->emplace(conjugationIndex,
+        cc->GetEvalAutomorphismKeyMap(outputKey.secretKey->GetKeyTag()).at(conjugationIndex));
     for (const auto& [position, sign] : sparseSupport) {
         FactorKey factor;
         auto masks = Masks(position, sign, slots);
         for (size_t band = 0; band < 4; ++band)
             factor.selectors[band] = cc->Encrypt(outputKey.publicKey,
                 cc->MakeCKKSPackedPlaintext(masks[band], 1, 0, nullptr, slots));
-        factor.rotation = MakeBlindKey(cc, outputKey.secretKey, position % slots, slots, -1);
+        if (useFused)
+            factor.fusedRotation = MakeFusedBlindKey(cc, outputKey.secretKey, position % slots, slots, -1);
+        else
+            factor.rotation = MakeBlindKey(cc, outputKey.secretKey, position % slots, slots, -1);
         result.factors.push_back(std::move(factor));
     }
     return result;
@@ -105,7 +117,8 @@ inline CT HalfBootstrap(const CC& cc, const CT& input, const HalfBootstrapKey& k
             selected = selected ? cc->EvalAdd(selected, term) : term;
         }
         cc->RescaleInPlace(selected);
-        factors.push_back(BlindRotate(cc, f.rotation, selected));
+        factors.push_back(key.useFused ? FusedBlindRotate(cc, f.fusedRotation, selected) :
+                                       BlindRotate(cc, f.rotation, selected));
     }
     auto root = ProductTree(cc, std::move(factors));
     auto conjugate = cc->EvalAutomorphism(root, 4 * slots - 1, *key.conjugation);

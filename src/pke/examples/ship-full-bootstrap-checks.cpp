@@ -118,6 +118,13 @@ int main() {
                     RequireRejected([&] { FullBootstrap(cc,tooHigh,keys); });
                 }
                 if (trial == 4) {
+                    // Regression: a second setup for the same context/key must
+                    // still obtain the already-cached conjugation key.
+                    auto referenceKeys = MakeFullBootstrapKey(cc,dense,sparse,false);
+                    auto reference = FullBootstrap(cc,input,referenceKeys);
+                    const double difference = Error(cc,dense.secretKey,cc->EvalSub(result,reference),std::vector<C>(slots));
+                    if (difference >= 5e-6) throw std::runtime_error("fused/reference full-bootstrap mismatch");
+                    std::cout << "N=" << ringDim << " full_reference_difference=" << difference << std::endl;
                     auto squared = cc->EvalMult(result,result);
                     cc->RescaleInPlace(squared);
                     auto expected = x;
@@ -146,7 +153,7 @@ int main() {
             if (largeError < 1 || largePhaseError >= 5e-6)
                 throw std::runtime_error("sine approximation limit was not reproduced");
         }
-        std::cout << "ALL FULL BOOTSTRAP REFERENCE CHECKS PASSED (toy parameters; not optimized or security validated)\n";
+        std::cout << "ALL FULL BOOTSTRAP CHECKS PASSED (toy parameters; paper equivalence/security unverified)\n";
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "FAIL " << e.what() << '\n';

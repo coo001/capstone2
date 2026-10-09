@@ -11,7 +11,7 @@ SHIP_JOBS="${SHIP_JOBS:-4}"
     -DBUILD_EXAMPLES=ON -DWITH_OPENMP=OFF -DGIT_SUBMOD_AUTO=OFF \
     -DNATIVE_SIZE=64 -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
-targets=(ship-baseline-checks ship-component-checks ship-half-bootstrap-checks ship-full-bootstrap-checks)
+targets=(ship-baseline-checks ship-component-checks ship-fused-rotation-checks ship-half-bootstrap-checks ship-full-bootstrap-checks)
 "${CMAKE_BIN}" --build "${SHIP_BUILD_DIR}" --target "${targets[@]}" --parallel "${SHIP_JOBS}"
 for target in "${targets[@]}"; do
     "${SHIP_BUILD_DIR}/bin/examples/pke/${target}"

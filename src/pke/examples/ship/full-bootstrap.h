@@ -110,16 +110,17 @@ struct PackingPlan {
     uint32_t babyStep;
     uint32_t inputLevel;
     std::vector<Plaintext> diagonals;
+    bool hoist;
 };
 
 // V[k,j] = exp(2*pi*i*(5^k)*j/(2N)). This is OpenFHE's FFTSpecial,
 // applied homomorphically to the slots holding coefficient pairs x_j+i*y_j.
-inline PackingPlan MakePackingPlan(const CC& cc, const SK& dense, uint32_t level) {
+inline PackingPlan MakePackingPlan(const CC& cc, const SK& dense, uint32_t level, bool hoist = true) {
     const uint32_t slots = cc->GetRingDimension()/2;
     const uint32_t cycl = 4*slots;
     uint32_t baby = 1;
     while (baby*baby < slots) baby <<= 1;
-    PackingPlan result{slots,baby,level,{}};
+    PackingPlan result{slots,baby,level,{},hoist};
     std::vector<int32_t> rotations;
     for (uint32_t j = 1; j < baby; ++j) rotations.push_back(j);
     for (uint32_t g = baby; g < slots; g += baby) rotations.push_back(g);
@@ -147,7 +148,9 @@ inline CT ApplyPacking(const CC& cc, const CT& input, const PackingPlan& plan) {
         throw std::invalid_argument("packing level/slot mismatch");
     std::vector<CT> baby(plan.babyStep);
     baby[0] = input;
-    for (uint32_t j = 1; j < plan.babyStep; ++j) baby[j] = cc->EvalRotate(input,j);
+    auto digits = plan.hoist ? cc->EvalFastRotationPrecompute(input) : nullptr;
+    for (uint32_t j = 1; j < plan.babyStep; ++j)
+        baby[j] = plan.hoist ? cc->EvalFastRotation(input,j,4*plan.slots,digits) : cc->EvalRotate(input,j);
     CT result;
     for (uint32_t g = 0; g < plan.slots; g += plan.babyStep) {
         CT group;
@@ -169,7 +172,7 @@ struct FullBootstrapKey {
 };
 
 inline FullBootstrapKey MakeFullBootstrapKey(const CC& cc, const KeyPair<DCRTPoly>& dense,
-                                           const SK& sparse) {
+                                           const SK& sparse, bool useFused = true) {
     if (!cc || !dense.publicKey || !dense.secretKey || !sparse ||
         dense.publicKey->GetCryptoContext() != cc || dense.secretKey->GetCryptoContext() != cc ||
         sparse->GetCryptoContext() != cc || dense.publicKey->GetKeyTag() != dense.secretKey->GetKeyTag())
@@ -194,8 +197,8 @@ inline FullBootstrapKey MakeFullBootstrapKey(const CC& cc, const KeyPair<DCRTPol
     if (dense.secretKey->GetPrivateElement().GetNumOfElements() <= treeDepth+3)
         throw std::invalid_argument("insufficient output modulus budget");
     return {MakeBottomSwitchKey(cc,dense.secretKey,sparse),
-            MakeHalfBootstrapKey(cc,dense,support,sparse->GetKeyTag(),1.0),
-            MakePackingPlan(cc,dense.secretKey,1+treeDepth)};
+            MakeHalfBootstrapKey(cc,dense,support,sparse->GetKeyTag(),1.0,useFused),
+            MakePackingPlan(cc,dense.secretKey,1+treeDepth,useFused)};
 }
 
 // This uses the SHIP small-angle sine approximation; it is not an exact identity
