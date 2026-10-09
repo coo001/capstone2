@@ -1,0 +1,84 @@
+SHIP/OpenFHE optimization measurements — 2026-10-09
+Same-context compare: one warm-up, seven measured evaluations each, alternating order.
+Standalone memory: independent processes measured with macOS /usr/bin/time -l.
+Toy N=1024, h=8, depth=9, scale bits=50, first modulus bits=60; no security claim.
+
+fused-compare-2.log
+sample mode=reference repeat=0 ms=503.429
+sample mode=fused repeat=0 ms=219.086
+sample mode=fused repeat=1 ms=219.834
+sample mode=reference repeat=1 ms=467.609
+sample mode=reference repeat=2 ms=472.839
+sample mode=fused repeat=2 ms=221.61
+sample mode=fused repeat=3 ms=219.659
+sample mode=reference repeat=3 ms=468.975
+sample mode=reference repeat=4 ms=469.29
+sample mode=fused repeat=4 ms=222.112
+sample mode=fused repeat=5 ms=223.073
+sample mode=reference repeat=5 ms=601.284
+sample mode=reference repeat=6 ms=604.333
+sample mode=fused repeat=6 ms=276.477
+summary mode=reference N=1024 h=8 slots=512 median_ms=472.839 min_ms=467.609 max_ms=604.333 max_error=5.66118e-07 output_towers=4
+summary mode=fused N=1024 h=8 slots=512 median_ms=221.61 min_ms=219.086 max_ms=276.477 max_error=2.07378e-07 output_towers=4
+comparison speedup=2.13365 output_difference=6.45905e-07
+BENCHMARK CHECKS PASSED (toy parameters; not a paper or baseline performance claim)
+
+fused-memory-reference-1.log
+mode=reference stored_payload_bytes=260308992 setup_ms=735.423
+sample mode=reference repeat=0 ms=479.21
+sample mode=reference repeat=1 ms=483.197
+sample mode=reference repeat=2 ms=488.114
+sample mode=reference repeat=3 ms=471.923
+sample mode=reference repeat=4 ms=503.143
+sample mode=reference repeat=5 ms=511.702
+sample mode=reference repeat=6 ms=481.522
+summary mode=reference N=1024 h=8 slots=512 median_ms=483.197 min_ms=471.923 max_ms=511.702 max_error=4.24215e-07 output_towers=4
+BENCHMARK CHECKS PASSED (toy parameters; not a paper or baseline performance claim)
+        4.71 real         4.54 user         0.09 sys
+           280952832  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               17349  page reclaims
+                   6  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               10382  involuntary context switches
+        109658916421  instructions retired
+         20117557590  cycles elapsed
+           278200896  peak memory footprint
+
+fused-memory-fused-1.log
+mode=fused stored_payload_bytes=256868352 setup_ms=561.548
+sample mode=fused repeat=0 ms=228.187
+sample mode=fused repeat=1 ms=224.505
+sample mode=fused repeat=2 ms=224.844
+sample mode=fused repeat=3 ms=220.609
+sample mode=fused repeat=4 ms=224.57
+sample mode=fused repeat=5 ms=222.699
+sample mode=fused repeat=6 ms=224.289
+summary mode=fused N=1024 h=8 slots=512 median_ms=224.505 min_ms=220.609 max_ms=228.187 max_error=2.89926e-07 output_towers=4
+BENCHMARK CHECKS PASSED (toy parameters; not a paper or baseline performance claim)
+        2.38 real         2.33 user         0.04 sys
+           278790144  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               17217  page reclaims
+                   6  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 859  involuntary context switches
+         56615479289  instructions retired
+         10566795690  cycles elapsed
+           276021800  peak memory footprint

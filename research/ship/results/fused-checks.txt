@@ -1,0 +1,63 @@
+SHIP/OpenFHE fused-path checks — 2026-10-09
+Apple M5 Pro (15 cores), 48 GiB RAM; AppleClang 21; CMake 4.4.4; NATIVE_SIZE=64; OpenMP OFF
+Run: bash research/ship/run-checks.sh
+Toy parameters; random cryptographic keys/noise; values vary between runs.
+
+standard_bootstrap slots=2048 max_error=1.60096e-05 usable_levels_before=1 usable_levels_after=10
+ALL BASELINE CHECKS PASSED (upstream toy parameters)
+PASS mask_oracle cases=240
+PASS hmux beta=0 rot=0 max_error=2.033e-12 level=0
+PASS hmux beta=0 rot=3 max_error=1.58601e-12 level=0
+PASS hmux beta=0 rot=-3 max_error=2.69909e-12 level=0
+PASS hmux beta=1 rot=0 max_error=2.14878e-12 level=0
+PASS hmux beta=1 rot=3 max_error=1.5802e-12 level=0
+PASS hmux beta=1 rot=-3 max_error=3.01529e-12 level=0
+PASS blind shift=0 max_error=8.55342e-12 level=0
+PASS blind shift=3 max_error=5.96399e-12 level=0
+PASS blind shift=8 max_error=8.60247e-12 level=0
+PASS blind shift=15 max_error=4.56029e-12 level=0
+PASS hmux beta=0 rot=0 max_error=2.05411e-12 level=3
+PASS hmux beta=0 rot=3 max_error=1.42843e-12 level=3
+PASS hmux beta=0 rot=-3 max_error=2.58755e-12 level=3
+PASS hmux beta=1 rot=0 max_error=2.1977e-12 level=3
+PASS hmux beta=1 rot=3 max_error=1.57112e-12 level=3
+PASS hmux beta=1 rot=-3 max_error=2.84451e-12 level=3
+PASS blind shift=0 max_error=8.69571e-12 level=3
+PASS blind shift=3 max_error=6.21738e-12 level=3
+PASS blind shift=8 max_error=8.06551e-12 level=3
+PASS blind shift=15 max_error=4.49305e-12 level=3
+PASS hmux beta=0 rot=0 max_error=2.0627e-12 level=7
+PASS hmux beta=0 rot=3 max_error=1.61477e-12 level=7
+PASS hmux beta=0 rot=-3 max_error=2.76844e-12 level=7
+PASS hmux beta=1 rot=0 max_error=1.88638e-12 level=7
+PASS hmux beta=1 rot=3 max_error=1.39199e-12 level=7
+PASS hmux beta=1 rot=-3 max_error=2.62069e-12 level=7
+PASS blind shift=0 max_error=8.24369e-12 level=7
+PASS blind shift=3 max_error=6.50854e-12 level=7
+PASS blind shift=8 max_error=8.17184e-12 level=7
+PASS blind shift=15 max_error=5.01503e-12 level=7
+ALL COMPONENT CHECKS PASSED (toy parameters; not a security/performance claim)
+PASS fused rotation without EvalRotateKeyGen
+PASS fused/reference/oracle cases=42 max_error=4.72178e-10 max_difference=4.81911e-10
+ALL FUSED ROTATION CHECKS PASSED (toy parameters; security unverified)
+trial=0 message_error=3.84975e-10 phase_error=3.84975e-10 imaginary_error=3.10627e-13 input_towers=1 output_towers=5 output_level=4 elapsed_ms=51.957
+trial=1 message_error=7.84499e-07 phase_error=5.48873e-10 imaginary_error=3.0339e-13 input_towers=1 output_towers=5 output_level=4 elapsed_ms=50.6865
+trial=2 message_error=7.79739e-07 phase_error=5.99485e-10 imaginary_error=2.91828e-13 input_towers=1 output_towers=5 output_level=4 elapsed_ms=50.4267
+ALL HALF-BOOTSTRAP CHECKS PASSED (toy sparse key; no security or latency claim)
+N=128 h=4 trial=0 switch_error=1.12614e-09 slot_error=5.79954e-09 sine_oracle_error=5.8833e-09 output_level=5 input_towers=1 output_towers=5 elapsed_ms=16.4245
+N=128 h=4 trial=1 switch_error=1.1419e-09 slot_error=1.0364e-07 sine_oracle_error=6.59042e-09 output_level=5 input_towers=1 output_towers=5 elapsed_ms=14.7228
+N=128 h=4 trial=2 switch_error=1.09135e-09 slot_error=4.7394e-09 sine_oracle_error=4.79427e-09 output_level=5 input_towers=1 output_towers=5 elapsed_ms=14.5887
+N=128 h=4 trial=3 switch_error=1.2207e-09 slot_error=2.17492e-08 sine_oracle_error=4.62145e-09 output_level=5 input_towers=1 output_towers=5 elapsed_ms=13.2125
+N=128 h=4 trial=4 switch_error=1.1147e-09 slot_error=2.822e-08 sine_oracle_error=4.52635e-09 output_level=5 input_towers=1 output_towers=5 elapsed_ms=13.4036
+N=128 full_reference_difference=8.55298e-09
+N=128 square_error=3.0185e-08 second_refresh_error=3.55829e-08
+N=128 large_message_error=1.64515 large_sine_oracle_error=4.53635e-09
+N=1024 h=8 trial=0 switch_error=1.12846e-08 slot_error=2.23237e-07 sine_oracle_error=2.22891e-07 output_level=6 input_towers=1 output_towers=4 elapsed_ms=260.364
+N=1024 h=8 trial=1 switch_error=1.07458e-08 slot_error=2.71444e-07 sine_oracle_error=1.9254e-07 output_level=6 input_towers=1 output_towers=4 elapsed_ms=250.805
+N=1024 h=8 trial=2 switch_error=1.08021e-08 slot_error=2.10109e-07 sine_oracle_error=2.0955e-07 output_level=6 input_towers=1 output_towers=4 elapsed_ms=242.289
+N=1024 h=8 trial=3 switch_error=1.08339e-08 slot_error=2.17047e-07 sine_oracle_error=2.18547e-07 output_level=6 input_towers=1 output_towers=4 elapsed_ms=254.074
+N=1024 h=8 trial=4 switch_error=1.0596e-08 slot_error=1.98101e-07 sine_oracle_error=1.98227e-07 output_level=6 input_towers=1 output_towers=4 elapsed_ms=241.677
+N=1024 full_reference_difference=4.15286e-07
+N=1024 square_error=1.86669e-07 second_refresh_error=2.66505e-07
+N=1024 large_message_error=1.64515 large_sine_oracle_error=2.57255e-07
+ALL FULL BOOTSTRAP CHECKS PASSED (toy parameters; paper equivalence/security unverified)

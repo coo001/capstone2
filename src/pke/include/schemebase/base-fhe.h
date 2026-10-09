@@ -126,7 +126,7 @@ public:
    * @return the refreshed ciphertext.
    */
     virtual Ciphertext<Element> EvalBootstrap(ConstCiphertext<Element>& ciphertext, uint32_t numIterations,
-                                              uint32_t precision, const PublicKey<DCRTPoly> pk) const {
+                                              uint32_t precision) const {
         OPENFHE_THROW("EvalBootstrap is not implemented for this scheme");
     }
 

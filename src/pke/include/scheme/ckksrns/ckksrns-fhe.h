@@ -101,43 +101,6 @@ public:
     // coefficients corresponding to conj(U0^T); used in encoding
     std::vector<std::vector<ReadOnlyPlaintext>> m_U0hatTPreFFT;
 
-    // SHIP 용으로 생긴 코드
-    uint32_t m_shipH;
-    uint32_t m_shipTheta;
-    uint32_t m_shipPTLevel;
-    uint32_t m_shipTreeHeight;
-    std::vector<int32_t> m_shipColumnOffsets; 
-    std::vector<uint32_t> m_shipActiveJ;
-
-    // ckksrns-fhe.h 의 CKKSBootstrapPrecom 안에 추가
-    struct ShipHMRKey {
-        Ciphertext<DCRTPoly> k0;  // RPQ ciphertext component
-        Ciphertext<DCRTPoly> k1;  // RPQ ciphertext component
-        int32_t rot;              // rotation amount (j)
-    };
-
-    struct ShipMMKeyLevel {
-        ShipHMRKey key_if1;  // hmrkey_{j_k}^{(2^k)}
-        ShipHMRKey key_if0;  // hmrkey_{1-j_k}^{(0)}
-    };
-
-    // mmkey(j0): k=0..log2(theta)-1
-    using ShipMMKey = std::vector<ShipMMKeyLevel>;
-
-    // precom에 “j0별 mmkey”를 저장
-    std::vector<ShipMMKey> m_shipMMKeys;  // size = m_shipTheta (또는 active j0 수)
-    NativeInteger m_shipP;                // paper의 P (aux modulus)
-    double m_shipInvP;                    // 1/P (CKKS 상수곱용)
-
-
-    // C2S용
-    std::vector<int32_t> m_shipRotOffsetsColumn;           // column offsets
-    std::vector<std::vector<Plaintext>> m_shipC2SMasksCT;  // m_{j,k} (우리는 PT로 사용 중)
-
-    // SHIP scale
-    double m_shipDeltaP;
-    // 여기까지
-
     Ciphertext<DCRTPoly> m_precompExp;
     Ciphertext<DCRTPoly> m_precompExpI;
 
@@ -176,23 +139,8 @@ private:
     using TugType  = typename DCRTPoly::TugType;
 
 public:
-    //PublicKey<DCRTPoly> m_shipPk;
     virtual ~FHECKKSRNS() = default;
 
-    /*
-    void SetShipPk(const PublicKey<DCRTPoly>& pk) {
-        // ① 스킴 레벨에서 멤버로 들고 가고 싶으면:
-        // m_shipPk = pk;
-
-        // ② precom에 pk를 박고 싶으면:
-        for (auto& kv : m_bootPrecomMap) {
-            if (kv.second) {
-                kv.second->m_shipPk = pk;  // 너가 CKKSBootstrapPrecom에 추가한 멤버
-            }
-        }
-    }
-    
-    */
     //------------------------------------------------------------------------------
     // Bootstrap Wrapper
     //------------------------------------------------------------------------------
@@ -207,7 +155,7 @@ public:
     void EvalBootstrapPrecompute(const CryptoContextImpl<DCRTPoly>& cc, uint32_t slots) override;
 
     Ciphertext<DCRTPoly> EvalBootstrap(ConstCiphertext<DCRTPoly>& ciphertext, uint32_t numIterations,
-                                       uint32_t precision, const PublicKey<DCRTPoly> pk) const;
+                                       uint32_t precision) const override;
 
     void EvalFBTSetup(const CryptoContextImpl<DCRTPoly>& cc, const std::vector<std::complex<double>>& coefficients,
                       uint32_t numSlots, const BigInteger& PIn, const BigInteger& POut, const BigInteger& Bigq,
@@ -303,14 +251,9 @@ public:
     Ciphertext<DCRTPoly> EvalLinearTransform(const std::vector<ReadOnlyPlaintext>& A,
                                              ConstCiphertext<DCRTPoly>& ct) const;
 
-    // SHIP용으로 바뀐 코드
-    Ciphertext<DCRTPoly> EvalCoeffsToSlots(const CKKSBootstrapPrecom& pre, 
-                                            ConstCiphertext<DCRTPoly>& ctxt,
-                                           const PublicKey<DCRTPoly> pk) const;
-
     Ciphertext<DCRTPoly> EvalCoeffsToSlots(const std::vector<std::vector<ReadOnlyPlaintext>>& A,
                                            ConstCiphertext<DCRTPoly>& ctxt) const;
-    
+
     Ciphertext<DCRTPoly> EvalSlotsToCoeffs(const std::vector<std::vector<ReadOnlyPlaintext>>& A,
                                            ConstCiphertext<DCRTPoly>& ctxt) const;
 
@@ -356,10 +299,6 @@ public:
 
     std::string SerializedObjectName() const {
         return "FHECKKSRNS";
-    }
-
-    const CKKSBootstrapPrecom& GetBootPrecomPublic(uint32_t slots) const {
-        return GetBootPrecom(slots);
     }
 
 private:
