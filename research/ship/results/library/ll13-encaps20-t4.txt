@@ -1,0 +1,12 @@
+set=LL13 N=8192 slots=4096 log2QP=218 HEStd_128_classic_max_log2QP=218 dnum=8
+Q_bits=25 20 21 28 24 25 24 25  P_bits=28 
+h=31 w=175 theta=6 B=4 log2(q0*p')<=45 (paper estimator bound 55) May21_window_cost_log2=117.195 (>=115 required)
+estimated_ship_key_GiB=7.9502 factor_dir=(memory)
+context_s=0.0182252 keygen_s=21.2616 ship_key_in_memory_GiB=7.95044
+openmp=on max_threads=4
+threads=4
+trial=0 latency_s=1.44631 max_real_error=0.195357 precision_bits=2.35582 output_limbs=3 mult_levels_after=1
+noise_flooding: estimate_log2=4.52433 flooding_std_log2=21.3168 scale_log2=20 max_real_error=573.698 precision_bits=-9.16415
+square_then_bootstrap max_real_error=0.404977 precision_bits=1.30409
+trial=1 latency_s=2.96831 max_real_error=0.188792 precision_bits=2.40513 output_limbs=3 mult_levels_after=1
+summary set=LL13 trials=2 median_latency_s=2.96831 worst_precision_bits=2.35582
