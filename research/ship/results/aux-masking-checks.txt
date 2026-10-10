@@ -1,0 +1,94 @@
+SHIP/OpenFHE auxiliary-modulus masking checks — 2026-10-10
+Apple Silicon macOS arm64; AppleClang; NATIVE_SIZE=64; OpenMP OFF; prebuilt OpenFHE 1.4.2 libraries (library code unchanged)
+Toy parameters; random keys/noise; values vary between runs.
+
+--- ship-aux-masking-checks
+N=1024 h=8 depth=9 log2P=240
+trial=0 aux_error=2.02333e-07 rescale_error=2.23919e-07 path_difference=3.2209e-07 aux_towers=5 rescale_towers=4 aux_ms=264.608 rescale_ms=242.799
+trial=1 aux_error=2.12176e-07 rescale_error=2.99683e-07 path_difference=3.28218e-07 aux_towers=5 rescale_towers=4 aux_ms=270.11 rescale_ms=232.588
+trial=2 aux_error=1.90803e-07 rescale_error=2.76462e-07 path_difference=2.78588e-07 aux_towers=5 rescale_towers=4 aux_ms=257.024 rescale_ms=233.239
+trial=3 aux_error=2.04947e-07 rescale_error=2.58578e-07 path_difference=3.27287e-07 aux_towers=5 rescale_towers=4 aux_ms=264.855 rescale_ms=230.661
+square_error=1.76079e-07 second_refresh_error=2.22879e-07
+median_ms aux=264.855 rescale=233.239 (4 single runs; not a benchmark)
+depth=6 h=8 aux_rejected=0 rescale_rejected=1
+depth=6 h=8 aux_error=3.19005e-07 output_towers=2
+depth=7 h=31 aux_rejected=0 rescale_rejected=1
+depth=7 h=31 aux_error=2.46946e-07 levels_consumed=6 output_towers=2 ms=884.274
+ALL AUX-MASKING CHECKS PASSED (toy parameters; security unverified)
+
+--- ship-half-bootstrap-checks
+trial=0 message_error=8.57772e-10 phase_error=8.57772e-10 imaginary_error=5.20311e-13 input_towers=1 output_towers=6 output_level=3 elapsed_ms=53.5314
+trial=1 message_error=7.84456e-07 phase_error=3.14428e-10 imaginary_error=5.24418e-13 input_towers=1 output_towers=6 output_level=3 elapsed_ms=49.8971
+trial=2 message_error=7.79662e-07 phase_error=2.92399e-10 imaginary_error=5.30077e-13 input_towers=1 output_towers=6 output_level=3 elapsed_ms=48.7864
+ALL HALF-BOOTSTRAP CHECKS PASSED (toy sparse key; no security or latency claim)
+
+--- ship-full-bootstrap-checks
+N=128 h=4 trial=0 switch_error=9.24054e-10 slot_error=6.24232e-09 sine_oracle_error=6.46031e-09 output_level=4 input_towers=1 output_towers=6 elapsed_ms=16.6388
+N=128 h=4 trial=1 switch_error=9.73839e-10 slot_error=1.01901e-07 sine_oracle_error=4.36006e-09 output_level=4 input_towers=1 output_towers=6 elapsed_ms=15.4435
+N=128 h=4 trial=2 switch_error=9.19293e-10 slot_error=4.32484e-09 sine_oracle_error=4.40319e-09 output_level=4 input_towers=1 output_towers=6 elapsed_ms=14.3869
+N=128 h=4 trial=3 switch_error=1.04223e-09 slot_error=2.088e-08 sine_oracle_error=5.93729e-09 output_level=4 input_towers=1 output_towers=6 elapsed_ms=14.3703
+N=128 h=4 trial=4 switch_error=8.88464e-10 slot_error=2.86661e-08 sine_oracle_error=8.6616e-09 output_level=4 input_towers=1 output_towers=6 elapsed_ms=14.1035
+N=128 full_reference_difference=2.23768e-08
+N=128 square_error=2.89358e-08 second_refresh_error=3.34607e-08
+N=128 large_message_error=1.64515 large_sine_oracle_error=7.10608e-09
+N=1024 h=8 trial=0 switch_error=1.55945e-08 slot_error=1.04663e-07 sine_oracle_error=1.04881e-07 output_level=5 input_towers=1 output_towers=5 elapsed_ms=269.682
+N=1024 h=8 trial=1 switch_error=1.5358e-08 slot_error=1.81602e-07 sine_oracle_error=8.68517e-08 output_level=5 input_towers=1 output_towers=5 elapsed_ms=256.625
+N=1024 h=8 trial=2 switch_error=1.50451e-08 slot_error=9.96626e-08 sine_oracle_error=9.99228e-08 output_level=5 input_towers=1 output_towers=5 elapsed_ms=254.154
+N=1024 h=8 trial=3 switch_error=1.62168e-08 slot_error=1.35447e-07 sine_oracle_error=1.34666e-07 output_level=5 input_towers=1 output_towers=5 elapsed_ms=251.866
+N=1024 h=8 trial=4 switch_error=1.5091e-08 slot_error=1.24396e-07 sine_oracle_error=1.21889e-07 output_level=5 input_towers=1 output_towers=5 elapsed_ms=252.054
+N=1024 full_reference_difference=2.96172e-07
+N=1024 square_error=1.51133e-07 second_refresh_error=1.7811e-07
+N=1024 large_message_error=1.64515 large_sine_oracle_error=9.31202e-08
+ALL FULL BOOTSTRAP CHECKS PASSED (toy parameters; paper equivalence/security unverified)
+
+--- ship-component-checks
+PASS mask_oracle cases=240
+PASS hmux beta=0 rot=0 max_error=1.37131e-12 level=0
+PASS hmux beta=0 rot=3 max_error=7.26749e-13 level=0
+PASS hmux beta=0 rot=-3 max_error=1.09588e-12 level=0
+PASS hmux beta=1 rot=0 max_error=1.27412e-12 level=0
+PASS hmux beta=1 rot=3 max_error=1.07701e-12 level=0
+PASS hmux beta=1 rot=-3 max_error=1.24319e-12 level=0
+PASS blind shift=0 max_error=5.24457e-12 level=0
+PASS blind shift=3 max_error=3.52213e-12 level=0
+PASS blind shift=8 max_error=5.21485e-12 level=0
+PASS blind shift=15 max_error=3.49413e-12 level=0
+PASS hmux beta=0 rot=0 max_error=1.30946e-12 level=3
+PASS hmux beta=0 rot=3 max_error=9.43558e-13 level=3
+PASS hmux beta=0 rot=-3 max_error=1.14857e-12 level=3
+PASS hmux beta=1 rot=0 max_error=1.2873e-12 level=3
+PASS hmux beta=1 rot=3 max_error=1.09495e-12 level=3
+PASS hmux beta=1 rot=-3 max_error=1.25679e-12 level=3
+PASS blind shift=0 max_error=4.56026e-12 level=3
+PASS blind shift=3 max_error=3.74689e-12 level=3
+PASS blind shift=8 max_error=4.61355e-12 level=3
+PASS blind shift=15 max_error=2.36118e-12 level=3
+PASS hmux beta=0 rot=0 max_error=1.17329e-12 level=7
+PASS hmux beta=0 rot=3 max_error=1.06867e-12 level=7
+PASS hmux beta=0 rot=-3 max_error=1.05609e-12 level=7
+PASS hmux beta=1 rot=0 max_error=1.17402e-12 level=7
+PASS hmux beta=1 rot=3 max_error=1.02978e-12 level=7
+PASS hmux beta=1 rot=-3 max_error=1.08524e-12 level=7
+PASS blind shift=0 max_error=4.68322e-12 level=7
+PASS blind shift=3 max_error=4.1376e-12 level=7
+PASS blind shift=8 max_error=5.22185e-12 level=7
+PASS blind shift=15 max_error=3.12557e-12 level=7
+ALL COMPONENT CHECKS PASSED (toy parameters; not a security/performance claim)
+
+--- ship-fused-rotation-checks
+PASS fused rotation without EvalRotateKeyGen
+PASS fused/reference/oracle cases=42 max_error=1.99738e-10 max_difference=2.00245e-10
+ALL FUSED ROTATION CHECKS PASSED (toy parameters; security unverified)
+
+--- ship-optimization-bench fused (standalone, /usr/bin/time -l)
+mode=fused stored_payload_bytes=263159808 setup_ms=619.994
+sample mode=fused repeat=0 ms=264.725
+sample mode=fused repeat=1 ms=259.727
+sample mode=fused repeat=2 ms=250.97
+sample mode=fused repeat=3 ms=248.684
+sample mode=fused repeat=4 ms=248.879
+sample mode=fused repeat=5 ms=268.641
+sample mode=fused repeat=6 ms=249.051
+summary mode=fused N=1024 h=8 slots=512 median_ms=250.97 min_ms=248.684 max_ms=268.641 max_error=3.42122e-07 output_towers=5
+BENCHMARK CHECKS PASSED (toy parameters; not a paper or baseline performance claim)
+           294780928  maximum resident set size
