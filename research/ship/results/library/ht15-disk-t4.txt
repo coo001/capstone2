@@ -1,0 +1,30 @@
+set=HT15 N=32768 slots=16384 log2QP=827 HEStd_128_classic_max_log2QP=881 dnum=6
+Q_bits=51 39 39 39 40 39 39 39 39 40 40 54 47 47 46 47  P_bits=50 50 50 
+h=31 w=528 theta=17 B=4 log2(q0*p')<=105 (paper estimator bound 105) May21_window_cost_log2=136.95 (>=115 required)
+estimated_ship_key_GiB=69.6182 factor_dir=/Users/coo/Documents/Aside/ship-keys/HT15
+context_s=0.246452 keygen_s=354.156 ship_key_in_memory_GiB=8.64844
+openmp=on max_threads=4
+threads=4
+trial=0 latency_s=49.1303 max_real_error=2.87537e-06 precision_bits=18.4078 output_limbs=11 mult_levels_after=9
+noise_flooding: estimate_log2=5.43097 flooding_std_log2=22.2234 scale_log2=39 max_real_error=0.005893 precision_bits=7.40678
+square_then_bootstrap max_real_error=1.51907e-05 precision_bits=16.0065
+trial=1 latency_s=50.5067 max_real_error=3.09318e-06 precision_bits=18.3025 output_limbs=11 mult_levels_after=9
+summary set=HT15 trials=2 median_latency_s=50.5067 worst_precision_bits=18.3025
+      505.99 real       663.43 user       200.02 sys
+         29347643392  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+             8816791  page reclaims
+                  40  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                 766  voluntary context switches
+             2122885  involuntary context switches
+       6707720985319  instructions retired
+       1922602072316  cycles elapsed
+         29852325752  peak memory footprint
