@@ -2,7 +2,8 @@
 
 2026-10-10. 대조 기준은 [ePrint 2025/784](https://eprint.iacr.org/2025/784.pdf) 전문(33쪽, EUROCRYPT 2025 출판본의 minor revision)이다.
 페이지 번호는 이 ePrint PDF 기준이며 Springer 출판본(31쪽)과 다르다.
-코드 기준은 `research/ship-aux-masking` 브랜치다.
+처음 대조(2026-10-10)의 코드 기준은 `research/ship-aux-masking` 브랜치의 연구 프로토타입이다.
+**2026-10-11 라이브러리 구현에서 아래 "논문과 다른 부분" 1~6 중 1~5와 6의 B-to-1 mux를 구현했다.** 대응표는 [LIBRARY.md](LIBRARY.md)에 있다.
 
 ## 논문과 일치하는 부분
 
@@ -18,7 +19,10 @@
 HMuxRot의 잡음까지 같다고 주장하지 않는다.
 OpenFHE의 `ApproxSwitchCRTBasis`·`ApproxModDown`은 논문의 이상적인 lift·반올림과 같은 구현이 아니다.
 
-## 논문과 다른 부분
+## 논문과 다른 부분 (연구 프로토타입 기준, 라이브러리에서 해소 여부 표시)
+
+라이브러리 구현에서의 상태: 1 구현(θ, base B), 2 구현(window w), 3 구현(`realOnly`), 4 구현(S2C를 낮은 모듈러스에서 먼저),
+5 구현(`q0·p'` special prime), 6 B-to-1 mux와 단계별 hoisting 구현.
 
 1. **블라인드 회전 방식.** 논문은 column 방식과 mux 방식을 θ로 섞고(Algorithm 4, p.22), mux는 base `B=4`로 분해한다(Table 2, p.25).
    코드는 mux 방식만 쓰며 base 2로 `log2(N/2)`비트를 모두 회전한다.
