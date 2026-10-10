@@ -1,0 +1,21 @@
+OpenFHE unit tests, build-ship-rn (WITH_REDUCED_NOISE=ON, OpenMP OFF), 2026-10-10
+--- core_tests
+[==========] Running 156 tests from 17 test suites.
+[==========] 156 tests from 17 test suites ran. (1887 ms total)
+[  PASSED  ] 156 tests.
+--- binfhe_tests
+[==========] Running 78 tests from 10 test suites.
+[==========] 78 tests from 10 test suites ran. (38653 ms total)
+[  PASSED  ] 78 tests.
+--- pke_tests
+[==========] Running 1882 tests from 32 test suites.
+[==========] 1882 tests from 32 test suites ran. (111788 ms total)
+[  PASSED  ] 1882 tests.
+--- SHIP gtest
+[       OK ] UTCKKSRNS_SHIP.RealWindowedColumnAndBase4Mux (408 ms)
+[       OK ] UTCKKSRNS_SHIP.ComplexUnrestrictedBinaryMux (782 ms)
+[       OK ] UTCKKSRNS_SHIP.RoleSpecificBootPrimes (391 ms)
+[       OK ] UTCKKSRNS_SHIP.HigherLevelInputIsLevelReduced (350 ms)
+[       OK ] UTCKKSRNS_SHIP.RejectsInvalidInputsAndKeys (310 ms)
+[       OK ] UTCKKSRNS_SHIP.PresetContextsMeetHEStandard (57 ms)
+[  PASSED  ] 6 tests.

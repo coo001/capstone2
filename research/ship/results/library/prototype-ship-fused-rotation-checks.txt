@@ -1,0 +1,3 @@
+PASS fused rotation without EvalRotateKeyGen
+PASS fused/reference/oracle cases=42 max_error=1.8505e-11 max_difference=7.02879e-12
+ALL FUSED ROTATION CHECKS PASSED (toy parameters; security unverified)

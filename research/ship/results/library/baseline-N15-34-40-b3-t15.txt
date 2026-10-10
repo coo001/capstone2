@@ -1,0 +1,23 @@
+requested_depth=21
+baseline N=32768 slots=16384 depth=21 log2QP=875 HEStd_128_classic_max_log2QP=881 scale_bits=34 first_bits=40 levelBudget=3,3
+setup_keygen_s=8.99314
+threads=15
+FAIL /Users/coo/Documents/Aside/capstone2/src/pke/lib/encoding/ckkspackedencoding.cpp:l.455:Decode(): The decryption failed because the approximation error is too high. Check the parameters. 
+       11.42 real        71.22 user         2.45 sys
+         14812594176  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              904381  page reclaims
+                  22  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              224336  involuntary context switches
+       1137443146206  instructions retired
+        277747925207  cycles elapsed
+         14816144136  peak memory footprint
