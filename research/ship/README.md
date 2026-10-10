@@ -9,6 +9,10 @@ OpenFHE의 표준 `EvalBootstrap`은 그대로 두고 `ship::FullBootstrap`을 �
 같은 키·입력의 512-slot 실험에서 기존 참조 경로 대비 중앙값 기준 약 2.13배 빨라졌다.
 메모리는 거의 줄지 않았다. 자세한 구성과 측정 한계는 [최적화 기록](OPTIMIZATION.md)에 있다.
 
+2026-10-10에 **마스크 곱셈을 보조 모듈러스 `P`에서 수행하는 경로**를 기본으로 바꿨다(논문 §4.4).
+부트스트래핑 깊이가 1 줄어 `h=31`에서 논문과 같은 6레벨을 쓴다. 자세한 내용은 [AUX-MASKING.md](AUX-MASKING.md)에 있다.
+원논문 전문과의 알고리즘별 대조는 [PAPER-COMPARISON.md](PAPER-COMPARISON.md)에 정리했다.
+
 ## 재현
 
 OpenFHE 의존성이 준비된 저장소에서 실행한다. 새 clone에는 submodule도 받아야 한다.
@@ -105,8 +109,8 @@ half-bootstrap은 512 slots × 3종 입력 / 1→5 limbs / 최대 메시지 오�
 
 ## 아직 완료하지 않은 연구
 
-1. **원논문과 알고리즘별 대조:** 논문 서지정보와 저자 발표자료, 독립 구현을 참고했다. 이번 환경에서 ePrint 전문 다운로드가 403으로 차단되어 전문 전체와의 대조는 완료하지 못했다. 현재 코드를 논문의 완전한 재현이라고 부르지 않는다.
-2. **논문 HMuxRot과의 대조:** OpenFHE 위에서 회전 결합·hoisting·지연 ModDown을 구현했지만 논문의 정확한 알고리즘/보안 분석과의 일치는 검증하지 않았다. bottom key switch도 논문의 최적화된 encapsulation과 동일하다고 주장하지 않는다.
+1. **원논문과 알고리즘별 대조:** 2026-10-10에 ePrint 전문으로 대조했다([PAPER-COMPARISON.md](PAPER-COMPARISON.md)). Algorithm 1·Lemma 1·HMuxRot의 평문 의미와 §4.4의 레벨 절약은 일치한다. column/mux 혼합 블라인드 회전(Algorithm 4), base-4 mux, 균등 간격 sparse 키, 실수 전용 경로, 논문 순서의 S2C는 아직 구현하지 않았다. 현재 코드를 논문의 완전한 재현이라고 부르지 않는다.
+2. **잡음과 키 전환의 동일성:** OpenFHE의 근사 기저 변환·ModDown은 논문의 이상적 연산과 다르다. bottom key switch도 논문이 보안을 평가한 `P·q0` 구성과 다르다.
 3. **보안 검증:** `HEStd_NotSet`, `N=128/1024`, `h=4/8`은 기능 검사 전용이다. sparse secret 분포, 공개 평가키와 키 전환의 보안 가정, modulus/잡음 예산을 포함한 분석이 필요하다.
 4. **확장 가능한 슬롯 변환과 벤치마크:** 현재 대각선 방식의 큰 메모리/연산 비용을 줄이고, 같은 보안 수준·정밀도·입력 범위에서 OpenFHE baseline과 비교해야 한다.
 5. **일반화:** 부분 packing, 자동 scale 기법, 더 넓은 메시지 범위, 대규모 반복 실행에 대한 검증이 남아 있다.
