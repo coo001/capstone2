@@ -44,6 +44,7 @@
 #include "key/evalkey.h"
 #include "key/keypair.h"
 #include "scheme/scheme-swch-params.h"
+#include "scheme/ckksrns/ckksrns-ship.h"
 #include "schemebase/base-pke.h"
 #include "schemebase/base-scheme.h"
 #include "schemerns/rns-cryptoparameters.h"
@@ -3608,6 +3609,36 @@ public:
     Ciphertext<Element> EvalBootstrap(ConstCiphertext<Element>& ciphertext, uint32_t numIterations = 1,
                                       uint32_t precision = 0) const {
         return GetScheme()->EvalBootstrap(ciphertext, numIterations, precision);
+    }
+
+    /**
+    * @brief Generates the SHIP bootstrapping key (Cheon, Hanrot, Kim, Stehle, EUROCRYPT 2025) for a secret key.
+    * Requires CKKS with FIXEDMANUAL scaling, HYBRID key switching and full packing (see GenSHIPCryptoContext).
+    * EvalMultKeyGen must have been called for the key. Also inserts the S2C rotation and conjugation keys.
+    *
+    * @param privateKey  Secret key.
+    * @param params      SHIP parameters (Hamming weight, window, column size, mux base, ...).
+    */
+    void EvalSHIPBootstrapKeyGen(const PrivateKey<Element> privateKey, const SHIPParams& params = SHIPParams()) {
+        ValidateKey(privateKey);
+        SHIPInsertBootstrapKey(privateKey->GetKeyTag(), SHIPKeyGen(privateKey, params));
+    }
+
+    /**
+    * @brief SHIP bootstrapping. The input must be fully packed and rescaled with at least two RNS limbs.
+    * The output consumed ceil(log2(h+1)) levels from the top of the modulus chain.
+    *
+    * @param ciphertext  Input ciphertext.
+    * @return Refreshed ciphertext.
+    */
+    Ciphertext<Element> EvalSHIPBootstrap(ConstCiphertext<Element>& ciphertext) const {
+        ValidateCiphertext(ciphertext);
+        return SHIPBootstrap(ciphertext, *SHIPGetBootstrapKey(ciphertext->GetKeyTag()));
+    }
+
+    /// Removes all SHIP bootstrapping keys.
+    static void ClearEvalSHIPBootstrapKeys() {
+        SHIPClearBootstrapKeys();
     }
 
     template <typename VectorDataType>
