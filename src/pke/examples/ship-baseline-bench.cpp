@@ -1,6 +1,8 @@
 // OpenFHE's standard CKKS bootstrapping (EvalBootstrap) with 128-bit HE-standard parameters, as the baseline
 // for ship-paper-bench (paper Section 5.3 compares SHIP with the conventional bootstrapping of HEaaN).
 // usage: ship-baseline-bench [scalingModBits] [firstModBits] [trials] [ringDim(0 = chosen by security)] [dnum] [levelBudget]
+//                            [uniform|sparse_encapsulated]
+// sparse_encapsulated: OpenFHE's sparse-secret encapsulation (h = 32 key modulo q0 * p0), the same idea as SHIP's.
 #include "openfhe.h"
 
 #include <algorithm>
@@ -25,9 +27,11 @@ int main(int argc, char** argv) {
         const uint32_t dnum      = argc > 5 ? std::stoul(argv[5]) : 0;
         const uint32_t budget    = argc > 6 ? std::stoul(argv[6]) : 3;
         const std::vector<uint32_t> levelBudget{budget, budget};
+        const std::string distName = argc > 7 ? argv[7] : "uniform";
+        const SecretKeyDist dist   = distName == "sparse_encapsulated" ? SPARSE_ENCAPSULATED : UNIFORM_TERNARY;
         const uint32_t levelsAfter = 1;  // same number of multiplicative levels as SHIP LL13 / LL14
         CCParams<CryptoContextCKKSRNS> p;
-        p.SetSecretKeyDist(UNIFORM_TERNARY);
+        p.SetSecretKeyDist(dist);
         p.SetSecurityLevel(HEStd_128_classic);
         if (ringDim)
             p.SetRingDim(ringDim);
@@ -38,7 +42,7 @@ int main(int argc, char** argv) {
         p.SetScalingTechnique(FLEXIBLEAUTO);
         p.SetKeySwitchTechnique(HYBRID);
         p.SetCKKSDataType(REAL);
-        const uint32_t depth = levelsAfter + FHECKKSRNS::GetBootstrapDepth(levelBudget, UNIFORM_TERNARY);
+        const uint32_t depth = levelsAfter + FHECKKSRNS::GetBootstrapDepth(levelBudget, dist);
         p.SetMultiplicativeDepth(depth);
         std::cout << "requested_depth=" << depth << std::endl;
         auto cc = GenCryptoContext(p);
@@ -53,6 +57,9 @@ int main(int argc, char** argv) {
         std::cout << "baseline N=" << N << " slots=" << slots << " depth=" << depth
                   << " log2QP=" << params->GetParamsQP()->GetModulus().GetMSB()
                   << " HEStd_128_classic_max_log2QP=" << StdLatticeParm::FindMaxQ(HEStd_ternary, HEStd_128_classic, N)
+                  << " secret=" << distName
+                  << " log2(q0*p0)=" << params->GetElementParams()->GetParams()[0]->GetModulus().GetMSB() +
+                                            params->GetParamsP()->GetParams()[0]->GetModulus().GetMSB()
                   << " scale_bits=" << scaleBits << " first_bits=" << firstBits << " levelBudget=" << budget << "," << budget << std::endl;
         auto start = Clock::now();
         cc->EvalBootstrapSetup(levelBudget, {0, 0}, slots);
