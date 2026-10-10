@@ -7,8 +7,11 @@
 #include <set>
 
 namespace ship {
+using QPPair = std::array<DCRTPoly, 2>;  // (b,a) over the extended basis QP
+
 struct FactorKey {
-    std::array<CT, 4> selectors;
+    std::array<CT, 4> selectors;          // rescaling path: Enc_Q(Delta * mask)
+    std::array<QPPair, 4> auxSelectors;   // auxiliary-modulus path: Enc_QP(P * mask)
     BlindKey rotation;
     FusedBlindKey fusedRotation;
 };
@@ -20,13 +23,104 @@ struct HalfBootstrapKey {
     uint32_t slots;
     double gamma;
     bool useFused;
+    bool auxMasking;
 };
+
+// Number of HE levels consumed before the product tree (paper Alg. 1 vs Sec. 4.4).
+inline uint32_t MaskingLevels(bool auxMasking) { return auxMasking ? 0 : 1; }
+
+inline std::shared_ptr<CryptoParametersCKKSRNS> CkksParams(const CC& cc) {
+    auto params = std::dynamic_pointer_cast<CryptoParametersCKKSRNS>(cc->GetCryptoParameters());
+    if (!params) throw std::invalid_argument("CKKS RNS parameters required");
+    return params;
+}
+
+// Signed lift of the bottom limb of a small integer polynomial to every limb of QP.
+// Exact only while all centered coefficients stay below q0/4, which is checked.
+inline DCRTPoly LiftSmallToQP(const DCRTPoly& poly, const std::shared_ptr<DCRTPoly::Params>& paramsQP) {
+    auto limb = poly.GetElementAtIndex(0);
+    limb.SetFormat(Format::COEFFICIENT);
+    const auto q0 = limb.GetModulus();
+    const auto quarter = q0 >> 2;
+    for (size_t i = 0; i < limb.GetLength(); ++i)
+        if (limb[i] >= quarter && limb[i] <= q0-quarter)
+            throw std::range_error("plaintext coefficient too large for an exact QP lift");
+    DCRTPoly result(paramsQP, Format::COEFFICIENT, true);
+    for (size_t k = 0; k < result.GetNumOfElements(); ++k) {
+        auto copy = limb;
+        const auto& target = paramsQP->GetParams()[k];
+        if (target->GetModulus() != q0)
+            copy.SwitchModulus(target->GetModulus(), target->GetRootOfUnity(), 0, 0);
+        result.SetElementAtIndex(k, std::move(copy));
+    }
+    result.SetFormat(Format::EVALUATION);
+    return result;
+}
+
+// Same secret as in KeySwitchHYBRID::KeySwitchGenInternal, extended from Q to QP.
+inline DCRTPoly SecretOverQP(const SK& sk, const std::shared_ptr<DCRTPoly::Params>& paramsQP) {
+    auto secret = sk->GetPrivateElement().Clone();
+    secret.SetFormat(Format::COEFFICIENT);
+    DCRTPoly result(paramsQP, Format::COEFFICIENT, true);
+    const size_t sizeQ = secret.GetNumOfElements();
+    for (size_t i = 0; i < sizeQ; ++i) result.SetElementAtIndex(i, secret.GetElementAtIndex(i));
+    for (size_t j = sizeQ; j < result.GetNumOfElements(); ++j) {
+        auto limb = secret.GetElementAtIndex(0);
+        const auto& target = paramsQP->GetParams()[j];
+        limb.SwitchModulus(target->GetModulus(), target->GetRootOfUnity(), 0, 0);
+        result.SetElementAtIndex(j, std::move(limb));
+    }
+    result.SetFormat(Format::EVALUATION);
+    return result;
+}
+
+// Enc_QP(P * mask) under the output secret (given over QP). The mask is CKKS slot-encoded with scale P instead of Delta,
+// so that a later product with a Delta-scaled plaintext and ModDown by P keeps scale Delta.
+// Coefficients: round(m_i * P / Delta) from the exact Delta-encoding m_i (relative error <= 2^-log2(Delta)).
+inline QPPair EncryptMaskOverQP(const CC& cc, const DCRTPoly& secretQP,
+                                const std::vector<double>& mask, uint32_t slots) {
+    const auto params = CkksParams(cc);
+    const auto paramsQP = params->GetParamsQP();
+    const uint32_t bottom = params->GetElementParams()->GetParams().size()-1;
+    auto pt = cc->MakeCKKSPackedPlaintext(mask, 1, bottom, nullptr, slots);
+    int exponent = 0;
+    const double mantissa = std::frexp(pt->GetScalingFactor(), &exponent);
+    if (mantissa != 0.5 || exponent < 2)
+        throw std::invalid_argument("auxiliary masking requires a power-of-two scaling factor");
+    const uint32_t deltaBits = exponent-1;
+    auto encoded = pt->GetElement<DCRTPoly>();
+    encoded.SetFormat(Format::COEFFICIENT);
+    const auto limb = encoded.GetElementAtIndex(0);
+    const auto q0 = limb.GetModulus();
+    const BigInteger P = params->GetParamsP()->GetModulus();
+    const BigInteger half = BigInteger(1).LShift(deltaBits-1);
+    DCRTPoly plain(paramsQP, Format::COEFFICIENT, true);
+    std::vector<NativePoly> limbs;
+    for (size_t k = 0; k < plain.GetNumOfElements(); ++k) limbs.push_back(plain.GetElementAtIndex(k));
+    for (size_t i = 0; i < limb.GetLength(); ++i) {
+        const bool negative = limb[i] > (q0 >> 1);
+        const uint64_t magnitude = (negative ? q0-limb[i] : limb[i]).ConvertToInt<uint64_t>();
+        const BigInteger scaled = (BigInteger(magnitude)*P + half).RShift(deltaBits);
+        for (auto& out : limbs) {
+            const auto r = out.GetModulus();
+            NativeInteger value(scaled.Mod(BigInteger(r.ConvertToInt<uint64_t>())).ConvertToInt<uint64_t>());
+            out[i] = (negative && value != NativeInteger(0)) ? r-value : value;
+        }
+    }
+    for (size_t k = 0; k < limbs.size(); ++k) plain.SetElementAtIndex(k, std::move(limbs[k]));
+    plain.SetFormat(Format::EVALUATION);
+    DCRTPoly::DugType uniform;
+    DCRTPoly a(uniform, paramsQP, Format::EVALUATION);
+    DCRTPoly e(params->GetDiscreteGaussianGenerator(), paramsQP, Format::EVALUATION);
+    DCRTPoly b = e - a*secretQP + plain;
+    return {std::move(b), std::move(a)};
+}
 
 // Only setup has access to sparse support/signs and the dense output secret.
 inline HalfBootstrapKey MakeHalfBootstrapKey(
     const CC& cc, const KeyPair<DCRTPoly>& outputKey,
     const std::vector<std::pair<uint32_t, int>>& sparseSupport,
-    const std::string& inputKeyTag, double gamma, bool useFused = true) {
+    const std::string& inputKeyTag, double gamma, bool useFused = true, bool auxMasking = true) {
     const uint32_t slots = cc->GetRingDimension() / 2;
     if (gamma <= 0 || !std::isfinite(gamma) || sparseSupport.empty())
         throw std::invalid_argument("invalid half-bootstrap parameters");
@@ -47,6 +141,9 @@ inline HalfBootstrapKey MakeHalfBootstrapKey(
     result.slots = slots;
     result.gamma = gamma;
     result.useFused = useFused;
+    result.auxMasking = auxMasking;
+    const auto paramsQP = parameters->GetParamsQP();
+    const DCRTPoly secretQP = auxMasking ? SecretOverQP(outputKey.secretKey, paramsQP) : DCRTPoly();
     std::vector<int32_t> rotations;
     for (uint32_t s = 1; s < slots; s <<= 1) rotations.push_back(-static_cast<int32_t>(s));
     if (!useFused) cc->EvalRotateKeyGen(outputKey.secretKey, rotations);
@@ -60,9 +157,13 @@ inline HalfBootstrapKey MakeHalfBootstrapKey(
     for (const auto& [position, sign] : sparseSupport) {
         FactorKey factor;
         auto masks = Masks(position, sign, slots);
-        for (size_t band = 0; band < 4; ++band)
-            factor.selectors[band] = cc->Encrypt(outputKey.publicKey,
-                cc->MakeCKKSPackedPlaintext(masks[band], 1, 0, nullptr, slots));
+        for (size_t band = 0; band < 4; ++band) {
+            if (auxMasking)
+                factor.auxSelectors[band] = EncryptMaskOverQP(cc, secretQP, masks[band], slots);
+            else
+                factor.selectors[band] = cc->Encrypt(outputKey.publicKey,
+                    cc->MakeCKKSPackedPlaintext(masks[band], 1, 0, nullptr, slots));
+        }
         if (useFused)
             factor.fusedRotation = MakeFusedBlindKey(cc, outputKey.secretKey, position % slots, slots, -1);
         else
@@ -104,19 +205,49 @@ inline CT HalfBootstrap(const CC& cc, const CT& input, const HalfBootstrapKey& k
         // -i is essential: adding the conjugate recovers sine, not cosine.
         initial[i] = C(0, -key.gamma/(4*static_cast<double>(pi))) * omega(b[i]);
     }
-    std::array<Plaintext, 4> phasePlaintexts;
-    for (size_t band = 0; band < 4; ++band)
-        phasePlaintexts[band] = cc->MakeCKKSPackedPlaintext(phases[band], 1, 0, nullptr, slots);
     std::vector<CT> factors;
+    // Every factor starts at the level reached after masking: 0 on the auxiliary path.
     factors.push_back(cc->Encrypt(key.outputPublicKey,
-        cc->MakeCKKSPackedPlaintext(initial, 1, 1, nullptr, slots)));
+        cc->MakeCKKSPackedPlaintext(initial, 1, MaskingLevels(key.auxMasking), nullptr, slots)));
+    std::array<Plaintext, 4> phasePlaintexts;
+    std::array<DCRTPoly, 4> phaseQP;
+    const auto params = CkksParams(cc);
+    const auto paramsQP = params->GetParamsQP();
+    const uint32_t bottom = params->GetElementParams()->GetParams().size()-1;
+    for (size_t band = 0; band < 4; ++band) {
+        if (key.auxMasking) {
+            // Public Delta-scaled plaintext, lifted exactly from q0 to QP.
+            auto pt = cc->MakeCKKSPackedPlaintext(phases[band], 1, bottom, nullptr, slots);
+            if (pt->GetScalingFactor() != factors.front()->GetScalingFactor())
+                throw std::logic_error("auxiliary masking scale mismatch");
+            phaseQP[band] = LiftSmallToQP(pt->GetElement<DCRTPoly>(), paramsQP);
+        }
+        else {
+            phasePlaintexts[band] = cc->MakeCKKSPackedPlaintext(phases[band], 1, 0, nullptr, slots);
+        }
+    }
+    const auto scheme = cc->GetScheme();
     for (const auto& f : key.factors) {
         CT selected;
-        for (size_t band = 0; band < 4; ++band) {
-            auto term = cc->EvalMult(f.selectors[band], phasePlaintexts[band]);
-            selected = selected ? cc->EvalAdd(selected, term) : term;
+        if (key.auxMasking) {
+            // Paper Sec. 4.1/4.4: PCMult over PQ, then Rescale_P (OpenFHE ApproxModDown).
+            // (P*mask) * (Delta*phase) / P keeps scale Delta and level 0: no Q-level is consumed.
+            DCRTPoly b(paramsQP, Format::EVALUATION, true), a(paramsQP, Format::EVALUATION, true);
+            for (size_t band = 0; band < 4; ++band) {
+                b += f.auxSelectors[band][0]*phaseQP[band];
+                a += f.auxSelectors[band][1]*phaseQP[band];
+            }
+            auto extended = factors.front()->CloneEmpty();
+            extended->SetElements({std::move(b), std::move(a)});
+            selected = scheme->KeySwitchDown(extended);
         }
-        cc->RescaleInPlace(selected);
+        else {
+            for (size_t band = 0; band < 4; ++band) {
+                auto term = cc->EvalMult(f.selectors[band], phasePlaintexts[band]);
+                selected = selected ? cc->EvalAdd(selected, term) : term;
+            }
+            cc->RescaleInPlace(selected);
+        }
         factors.push_back(key.useFused ? FusedBlindRotate(cc, f.fusedRotation, selected) :
                                        BlindRotate(cc, f.rotation, selected));
     }
