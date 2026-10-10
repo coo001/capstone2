@@ -172,7 +172,7 @@ struct FullBootstrapKey {
 };
 
 inline FullBootstrapKey MakeFullBootstrapKey(const CC& cc, const KeyPair<DCRTPoly>& dense,
-                                           const SK& sparse, bool useFused = true) {
+                                           const SK& sparse, bool useFused = true, bool auxMasking = true) {
     if (!cc || !dense.publicKey || !dense.secretKey || !sparse ||
         dense.publicKey->GetCryptoContext() != cc || dense.secretKey->GetCryptoContext() != cc ||
         sparse->GetCryptoContext() != cc || dense.publicKey->GetKeyTag() != dense.secretKey->GetKeyTag())
@@ -193,12 +193,13 @@ inline FullBootstrapKey MakeFullBootstrapKey(const CC& cc, const KeyPair<DCRTPol
     }
     uint32_t treeDepth = 0;
     for (size_t width = 1; width < support.size()+1; width <<= 1) ++treeDepth;
-    // One masking level, then product tree, then one homomorphic FFT level.
-    if (dense.secretKey->GetPrivateElement().GetNumOfElements() <= treeDepth+3)
+    // Masking (one level, or none with the auxiliary modulus), product tree, one FFT level.
+    const uint32_t consumed = MaskingLevels(auxMasking)+treeDepth+1;
+    if (dense.secretKey->GetPrivateElement().GetNumOfElements() <= consumed+1)
         throw std::invalid_argument("insufficient output modulus budget");
     return {MakeBottomSwitchKey(cc,dense.secretKey,sparse),
-            MakeHalfBootstrapKey(cc,dense,support,sparse->GetKeyTag(),1.0,useFused),
-            MakePackingPlan(cc,dense.secretKey,1+treeDepth,useFused)};
+            MakeHalfBootstrapKey(cc,dense,support,sparse->GetKeyTag(),1.0,useFused,auxMasking),
+            MakePackingPlan(cc,dense.secretKey,MaskingLevels(auxMasking)+treeDepth,useFused)};
 }
 
 // This uses the SHIP small-angle sine approximation; it is not an exact identity
