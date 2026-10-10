@@ -84,3 +84,12 @@ LL13 min sparse h=31 N=8192 log(q0p')=42 | usvp | inf | 0s
 LL13 min sparse h=31 N=8192 log(q0p')=42 | dual_hybrid | inf | 0s
 LL13 min sparse h=31 N=8192 log(q0p')=42 | bdd_mitm_hybrid | 129.8 | 119s
 DONE
+
+## 5. OpenFHE SPARSE_ENCAPSULATED baseline (h = 32 key modulo q0 * p0, SparseTernary(16, 16, n))
+OpenFHE SPARSE_ENCAPSULATED N=2^15 h=32 log(q0p0)=112 | usvp | inf | 0s
+OpenFHE SPARSE_ENCAPSULATED N=2^15 h=32 log(q0p0)=112 | dual_hybrid | inf | 0s
+OpenFHE SPARSE_ENCAPSULATED N=2^15 h=32 log(q0p0)=112 | bdd_mitm_hybrid | 149.7 | 299s
+OpenFHE SPARSE_ENCAPSULATED N=2^16 h=32 log(q0p0)=120 | usvp | inf | 0s
+OpenFHE SPARSE_ENCAPSULATED N=2^16 h=32 log(q0p0)=120 | dual_hybrid | inf | 0s
+OpenFHE SPARSE_ENCAPSULATED N=2^16 h=32 log(q0p0)=120 | bdd_mitm_hybrid | 172.1 | 367s
+DONE
