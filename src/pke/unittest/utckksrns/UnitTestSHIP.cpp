@@ -42,6 +42,8 @@
 #include "gtest/gtest.h"
 
 #include <cmath>
+#include <filesystem>
+#include <sstream>
 #include <complex>
 #include <random>
 #include <vector>
@@ -185,8 +187,59 @@ TEST_F(UTCKKSRNS_SHIP, RejectsInvalidInputsAndKeys) {
     EXPECT_THROW(cc->EvalSHIPBootstrap(degreeTwo), OpenFHEException);
 }
 
+TEST_F(UTCKKSRNS_SHIP, CompactSerializationRoundTrip) {
+    auto cc          = GenSHIPCryptoContext(ToySpec(8));
+    const uint32_t S = cc->GetRingDimension() / 2;
+    const uint32_t Q = cc->GetElementParams()->GetParams().size();
+    auto kp          = cc->KeyGen();
+    cc->EvalMultKeyGen(kp.secretKey);
+    cc->EvalSHIPBootstrapKeyGen(kp.secretKey, ToyParams());
+    std::stringstream compact, full;
+    CryptoContextImpl<DCRTPoly>::SerializeEvalSHIPBootstrapKey(compact, kp.secretKey->GetKeyTag(), true);
+    CryptoContextImpl<DCRTPoly>::SerializeEvalSHIPBootstrapKey(full, kp.secretKey->GetKeyTag(), false);
+    EXPECT_LT(compact.str().size(), 0.6 * full.str().size());
+    CryptoContextImpl<DCRTPoly>::ClearEvalSHIPBootstrapKeys();
+    cc->DeserializeEvalSHIPBootstrapKey(compact);
+    auto x  = Random(S, true, 5);
+    auto ct = cc->Encrypt(kp.publicKey, cc->MakeCKKSPackedPlaintext(x, 1, Q - 2, nullptr, S));
+    EXPECT_LT(MaxError(cc, kp.secretKey, cc->EvalSHIPBootstrap(ct), x), 1e-4);
+}
+
+TEST_F(UTCKKSRNS_SHIP, DiskBackedFactorKeys) {
+    auto cc          = GenSHIPCryptoContext(ToySpec(8));
+    const uint32_t S = cc->GetRingDimension() / 2;
+    const uint32_t Q = cc->GetElementParams()->GetParams().size();
+    auto kp          = cc->KeyGen();
+    cc->EvalMultKeyGen(kp.secretKey);
+    const auto dir = (std::filesystem::temp_directory_path() / "ship-unittest-factors").string();
+    std::filesystem::remove_all(dir);
+    cc->EvalSHIPBootstrapKeyGen(kp.secretKey, ToyParams(), dir);
+    EXPECT_TRUE(std::filesystem::exists(dir + "/factor-0.ship"));
+    auto x  = Random(S, true, 9);
+    auto ct = cc->Encrypt(kp.publicKey, cc->MakeCKKSPackedPlaintext(x, 1, Q - 2, nullptr, S));
+    EXPECT_LT(MaxError(cc, kp.secretKey, cc->EvalSHIPBootstrap(ct), x), 1e-4);
+    std::filesystem::remove_all(dir);
+}
+
+TEST_F(UTCKKSRNS_SHIP, MessageBoundWidensInputRange) {
+    auto cc          = GenSHIPCryptoContext(ToySpec(8));
+    const uint32_t S = cc->GetRingDimension() / 2;
+    const uint32_t Q = cc->GetElementParams()->GetParams().size();
+    auto kp          = cc->KeyGen();
+    cc->EvalMultKeyGen(kp.secretKey);
+    auto p         = ToyParams();
+    p.messageBound = 64;
+    cc->EvalSHIPBootstrapKeyGen(kp.secretKey, p);
+    auto x = Random(S, true, 13);
+    for (auto& v : x)
+        v *= 64.0;
+    auto ct = cc->Encrypt(kp.publicKey, cc->MakeCKKSPackedPlaintext(x, 1, Q - 2, nullptr, S));
+    EXPECT_LT(MaxError(cc, kp.secretKey, cc->EvalSHIPBootstrap(ct), x), 64 * 1e-4);
+}
+
 TEST_F(UTCKKSRNS_SHIP, PresetContextsMeetHEStandard) {
-    for (const auto& spec : {SHIPContextSpec::LL13(), SHIPContextSpec::LL14()}) {
+    for (const auto& spec : {SHIPContextSpec::LL13(), SHIPContextSpec::LL14(), SHIPContextSpec::HT14(),
+                             SHIPContextSpec::HT15()}) {
         auto cc = GenSHIPCryptoContext(spec);
         EXPECT_LE(SHIPLogQP(cc), StdLatticeParm::FindMaxQ(HEStd_ternary, HEStd_128_classic, spec.ringDim));
         EXPECT_EQ(cc->GetRingDimension(), spec.ringDim);
