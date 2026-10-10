@@ -15,7 +15,7 @@ SHIP_JOBS="${SHIP_JOBS:-4}"
 
 # Research prototypes (examples/pke/ship/*.h) and the library implementation (lib/scheme/ckksrns/ckksrns-ship.cpp).
 targets=(ship-baseline-checks ship-component-checks ship-fused-rotation-checks ship-half-bootstrap-checks
-         ship-full-bootstrap-checks ship-aux-masking-checks ship-library-checks pke_tests)
+         ship-full-bootstrap-checks ship-aux-masking-checks ship-library-checks ship-deployment-checks pke_tests)
 "${CMAKE_BIN}" --build "${SHIP_BUILD_DIR}" --target "${targets[@]}" --parallel "${SHIP_JOBS}"
 for target in "${targets[@]}"; do
     if [ "${target}" = pke_tests ]; then
