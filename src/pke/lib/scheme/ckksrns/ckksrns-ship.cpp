@@ -38,24 +38,118 @@
 #include "scheme/ckksrns/ckksrns-cryptoparameters.h"
 #include "scheme/ckksrns/gen-cryptocontext-ckksrns.h"
 #include "utils/exception.h"
+#include "utils/prng/blake2engine.h"
+#include "utils/serial.h"
+
+#include "cereal/types/array.hpp"
+#include "cereal/types/string.hpp"
 
 #include <array>
 #include <cmath>
 #include <complex>
+#include <filesystem>
+#include <fstream>
 #include <map>
 #include <mutex>
 #include <random>
 #include <set>
+#include <sstream>
 #include <vector>
 
 namespace lbcrypto {
+
+using SHIPSeed = default_prng::Blake2Engine::blake2_seed_array_t;
+
+// Key-switching key over Q_{qLimbs} * P with digits covering the first qLimbs primes of Q.
+// Digit j encrypts P * [Q/D_j]^{-1}... in the usual hybrid form (as KeySwitchHYBRID::KeySwitchGenInternal);
+// a[j] is uniform and generated from (seed, id + j).
+struct SHIPSwitchKey {
+    uint32_t qLimbs = 0;
+    uint64_t id     = 0;
+    std::vector<DCRTPoly> b;
+    std::vector<DCRTPoly> a;
+};
+
+// HMuxRot key (Definition 1 with gadget decomposition, Algorithm 5): the key switch targets sigma^{-1}(s)
+// and sigma is applied afterwards, so the decomposition is shared (hoisted) across the B branches of one
+// B-to-1 mux-rotate and ModDown is applied once per mux step.
+struct SHIPMuxKey {
+    SHIPSwitchKey body;  // encrypts beta
+    SHIPSwitchKey mask;  // encrypts beta * s
+    uint32_t automorphism = 1;
+    std::vector<uint32_t> permutation;
+};
+
+// Automorphism (rotation or conjugation) key: key switch s -> sigma^{-1}(s), then sigma.
+struct SHIPRotationKey {
+    int32_t rotation      = 0;  // OpenFHE EvalRotate convention (left rotation); 0 for conjugation
+    uint32_t automorphism = 1;
+    SHIPSwitchKey key;
+    std::vector<uint32_t> permutation;
+};
+
+// Enc_QP(P * 2^extra * v) with uniform component from (seed, id).
+struct SHIPColumnKey {
+    uint64_t id = 0;
+    DCRTPoly b;
+    DCRTPoly a;
+};
+
+struct SHIPFactorKey {
+    uint32_t offset = 0;  // public rotation offset o (mod N/2)
+    // column[i][band] = Enc_QP(P * 2^extra * 1_{i = r0} * Rot_{o + r0}(M'_band)), i < theta
+    std::vector<std::array<SHIPColumnKey, 4>> column;
+    // mux[t][d] selects a right rotation by theta * d * B^t if the t-th base-B digit of r1 equals d
+    std::vector<std::vector<SHIPMuxKey>> mux;
+};
+
+struct SHIPEncapsulationKey {
+    std::shared_ptr<ILNativeParams> paramsQ0;
+    std::shared_ptr<ILNativeParams> paramsP;
+    NativePoly bQ0, aQ0, bP, aP;  // Enc_{s_sparse}(p' * s_dense) mod q0 * p', EVALUATION format
+    NativeInteger pInvModQ0;
+};
+
+struct SHIPPackingPlan {
+    uint32_t babyStep   = 0;
+    uint32_t inputLevel = 0;
+    std::vector<Plaintext> diagonals;
+    std::map<int32_t, SHIPRotationKey> rotations;
+};
+
+class SHIPBootstrapKey {
+public:
+    SHIPParams params;
+    CryptoContext<DCRTPoly> context;
+    std::string denseTag;
+    std::string sparseTag;
+    uint32_t ringDim       = 0;
+    uint32_t slots         = 0;
+    uint32_t treeDepth     = 0;
+    uint32_t leafExtraBits = 0;  // product-tree leaves have scale 2^(p + leafExtraBits)
+    SHIPSeed seed{};
+    SHIPEncapsulationKey encapsulation;
+    std::vector<SHIPFactorKey> factors;  // in memory, or empty when factorDirectory is used
+    std::string factorDirectory;
+    uint32_t numFactors = 0;
+    std::map<uint32_t, std::vector<uint32_t>> columnPermutations;  // right rotation t -> automorphism map
+    SHIPRotationKey conjugation;
+    SHIPPackingPlan packing;
+};
 
 namespace {
 
 using CT     = Ciphertext<DCRTPoly>;
 using CC     = CryptoContext<DCRTPoly>;
 using C      = std::complex<double>;
-using QPPair = std::array<DCRTPoly, 2>;  // (b, a) over the extended basis QP
+using InArchive  = cereal::PortableBinaryInputArchive;
+using OutArchive = cereal::PortableBinaryOutputArchive;
+
+constexpr uint64_t kColumnId   = uint64_t(1) << 60;
+constexpr uint64_t kMuxId      = uint64_t(2) << 60;
+constexpr uint64_t kRotationId = uint64_t(3) << 60;
+constexpr uint64_t kConjId     = uint64_t(4) << 60;
+constexpr uint32_t kFormatVersion = 1;
 
 std::shared_ptr<CryptoParametersCKKSRNS> CkksParams(const CC& cc) {
     auto params = std::dynamic_pointer_cast<CryptoParametersCKKSRNS>(cc->GetCryptoParameters());
@@ -88,12 +182,67 @@ std::array<std::vector<double>, 4> PreRotationMasks(uint32_t j, int sign, uint32
         v.assign(S, 0.0);
     const uint32_t n = 2 * S;
     for (uint32_t i = 0; i < S; ++i) {
-        const uint32_t source      = (i + n - j) % n;
-        const int effectiveSign    = i < j ? -sign : sign;
-        const uint32_t band        = (source >= S ? 2 : 0) + (effectiveSign < 0 ? 1 : 0);
+        const uint32_t source   = (i + n - j) % n;
+        const int effectiveSign = i < j ? -sign : sign;
+        const uint32_t band     = (source >= S ? 2 : 0) + (effectiveSign < 0 ? 1 : 0);
         result[band][source % S] = 1.0;
     }
     return result;
+}
+
+// Q_{qLimbs} * P basis (first qLimbs primes of Q followed by all of P).
+std::shared_ptr<DCRTPoly::Params> SubParams(const CC& cc, uint32_t qLimbs) {
+    const auto params   = CkksParams(cc);
+    const auto& primesQ = params->GetElementParams()->GetParams();
+    const auto& primesP = params->GetParamsP()->GetParams();
+    if (qLimbs == primesQ.size())
+        return params->GetParamsQP();
+    std::vector<NativeInteger> moduli, roots;
+    for (uint32_t i = 0; i < qLimbs; ++i) {
+        moduli.push_back(primesQ[i]->GetModulus());
+        roots.push_back(primesQ[i]->GetRootOfUnity());
+    }
+    for (const auto& p : primesP) {
+        moduli.push_back(p->GetModulus());
+        roots.push_back(p->GetRootOfUnity());
+    }
+    return std::make_shared<DCRTPoly::Params>(2 * cc->GetRingDimension(), moduli, roots);
+}
+
+// Restriction of a polynomial over Q * P to the basis Q_{qLimbs} * P.
+DCRTPoly Restrict(const DCRTPoly& fullQP, const std::shared_ptr<DCRTPoly::Params>& sub, uint32_t sizeQ,
+                  uint32_t qLimbs) {
+    DCRTPoly out(sub, fullQP.GetFormat(), true);
+    const uint32_t sizeP = sub->GetParams().size() - qLimbs;
+    for (uint32_t i = 0; i < qLimbs; ++i)
+        out.SetElementAtIndex(i, fullQP.GetElementAtIndex(i));
+    for (uint32_t j = 0; j < sizeP; ++j)
+        out.SetElementAtIndex(qLimbs + j, fullQP.GetElementAtIndex(sizeQ + j));
+    return out;
+}
+
+// Uniform polynomial (evaluation representation) derived from the public seed and an identifier.
+DCRTPoly SeededUniform(const std::shared_ptr<DCRTPoly::Params>& params, const SHIPSeed& seed, uint64_t id) {
+    SHIPSeed s = seed;
+    s[14]      = static_cast<uint32_t>(id);
+    s[15]      = static_cast<uint32_t>(id >> 32);
+    default_prng::Blake2Engine engine(s, 0);
+    DCRTPoly out(params, Format::EVALUATION, true);
+    for (size_t k = 0; k < out.GetNumOfElements(); ++k) {
+        auto limb           = out.GetElementAtIndex(k);
+        const uint64_t q    = limb.GetModulus().ConvertToInt<uint64_t>();
+        const uint32_t bits = limb.GetModulus().GetMSB();
+        const uint64_t mask = bits >= 64 ? ~uint64_t(0) : ((uint64_t(1) << bits) - 1);
+        for (size_t i = 0; i < limb.GetLength(); ++i) {
+            uint64_t x;
+            do {
+                x = ((uint64_t(engine()) << 32) | engine()) & mask;
+            } while (x >= q);
+            limb[i] = NativeInteger(x);
+        }
+        out.SetElementAtIndex(k, std::move(limb));
+    }
+    return out;
 }
 
 // Signed lift of the bottom limb of a small integer polynomial to all limbs of QP (exact below q0/4).
@@ -117,9 +266,9 @@ DCRTPoly LiftSmallToQP(const DCRTPoly& poly, const std::shared_ptr<DCRTPoly::Par
     return result;
 }
 
-// The secret extended from Q to QP, as in KeySwitchHYBRID::KeySwitchGenInternal.
-DCRTPoly SecretOverQP(const PrivateKey<DCRTPoly>& sk, const std::shared_ptr<DCRTPoly::Params>& paramsQP) {
-    auto secret = sk->GetPrivateElement().Clone();
+// A secret over Q extended to QP, as in KeySwitchHYBRID::KeySwitchGenInternal.
+DCRTPoly ExtendToQP(const DCRTPoly& secretQ, const std::shared_ptr<DCRTPoly::Params>& paramsQP) {
+    auto secret = secretQ;
     secret.SetFormat(Format::COEFFICIENT);
     DCRTPoly result(paramsQP, Format::COEFFICIENT, true);
     const size_t sizeQ = secret.GetNumOfElements();
@@ -135,151 +284,162 @@ DCRTPoly SecretOverQP(const PrivateKey<DCRTPoly>& sk, const std::shared_ptr<DCRT
     return result;
 }
 
-// Enc_QP(P * 2^extraBits * v): v slot-encoded with scaling factor P * 2^extraBits under the output secret.
-// round(m_i * P * 2^extraBits / Delta) from the exact Delta-encoding m_i; relative error <= 2^-log2(Delta).
-// After the product with a Delta-scaled phase and Rescale_P, the factor has scale 2^extraBits * Delta.
-QPPair EncryptScaledByP(const CC& cc, const DCRTPoly& secretQP, const std::vector<double>& values, uint32_t S,
-                        uint32_t extraBits) {
-    const auto params   = CkksParams(cc);
-    const auto paramsQP = params->GetParamsQP();
-    const uint32_t bottom = params->GetElementParams()->GetParams().size() - 1;
-    auto pt               = cc->MakeCKKSPackedPlaintext(values, 1, bottom, nullptr, S);
-    int exponent          = 0;
-    if (std::frexp(pt->GetScalingFactor(), &exponent) != 0.5 || exponent < 2)
-        OPENFHE_THROW("SHIP requires a power-of-two CKKS scaling factor");
-    const uint32_t deltaBits = exponent - 1;
-    auto encoded             = pt->GetElement<DCRTPoly>();
-    encoded.SetFormat(Format::COEFFICIENT);
-    const auto limb       = encoded.GetElementAtIndex(0);
-    const auto q0         = limb.GetModulus();
-    const BigInteger P    = params->GetParamsP()->GetModulus();
-    const BigInteger half = BigInteger(1).LShift(deltaBits - 1);
-    DCRTPoly plain(paramsQP, Format::COEFFICIENT, true);
-    std::vector<NativePoly> limbs;
-    for (size_t k = 0; k < plain.GetNumOfElements(); ++k)
-        limbs.push_back(plain.GetElementAtIndex(k));
-    for (size_t i = 0; i < limb.GetLength(); ++i) {
-        if (limb[i] == NativeInteger(0))
-            continue;
-        const bool negative       = limb[i] > (q0 >> 1);
-        const uint64_t magnitude  = (negative ? q0 - limb[i] : limb[i]).ConvertToInt<uint64_t>();
-        const BigInteger scaled   = ((BigInteger(magnitude) * P).LShift(extraBits) + half).RShift(deltaBits);
-        for (auto& out : limbs) {
-            const auto r = out.GetModulus();
-            NativeInteger value(scaled.Mod(BigInteger(r.ConvertToInt<uint64_t>())).ConvertToInt<uint64_t>());
-            out[i] = (negative && value != NativeInteger(0)) ? r - value : value;
-        }
+// Hybrid key-switching key from oldSecret (EVALUATION, over Q) to newSecretQP (EVALUATION, over QP),
+// restricted to the digits and limbs of Q_{qLimbs}.
+SHIPSwitchKey GenSwitchKey(const CC& cc, const DCRTPoly& oldSecret, const DCRTPoly& newSecretQP, uint32_t qLimbs,
+                           const SHIPSeed& seed, uint64_t id) {
+    const auto params    = CkksParams(cc);
+    const uint32_t sizeQ = params->GetElementParams()->GetParams().size();
+    const uint32_t alpha = params->GetNumPerPartQ();
+    const auto& PModq    = params->GetPModq();
+    const auto sub       = SubParams(cc, qLimbs);
+    const DCRTPoly newSub = Restrict(newSecretQP, sub, sizeQ, qLimbs);
+    SHIPSwitchKey key;
+    key.qLimbs            = qLimbs;
+    key.id                = id;
+    const uint32_t digits = (qLimbs + alpha - 1) / alpha;
+    for (uint32_t part = 0; part < digits; ++part) {
+        DCRTPoly a = SeededUniform(sub, seed, id + part);
+        DCRTPoly e(params->GetDiscreteGaussianGenerator(), sub, Format::EVALUATION);
+        DCRTPoly b = e - a * newSub;
+        const uint32_t start = alpha * part;
+        const uint32_t end   = std::min(qLimbs, start + alpha);
+        for (uint32_t i = start; i < end; ++i)
+            b.SetElementAtIndex(i, b.GetElementAtIndex(i) + oldSecret.GetElementAtIndex(i) * PModq[i]);
+        key.b.push_back(std::move(b));
+        key.a.push_back(std::move(a));
     }
-    for (size_t k = 0; k < limbs.size(); ++k)
-        plain.SetElementAtIndex(k, std::move(limbs[k]));
-    plain.SetFormat(Format::EVALUATION);
-    DCRTPoly::DugType uniform;
-    DCRTPoly a(uniform, paramsQP, Format::EVALUATION);
-    DCRTPoly e(params->GetDiscreteGaussianGenerator(), paramsQP, Format::EVALUATION);
-    DCRTPoly b = e - a * secretQP + plain;
-    return {std::move(b), std::move(a)};
+    return key;
 }
 
-}  // namespace
+// sigma^{-1}(s) for sigma: X -> X^k.
+DCRTPoly InverseAutomorphism(const DCRTPoly& secret, uint32_t k) {
+    const uint32_t n = secret.GetRingDimension();
+    const uint32_t inverse = NativeInteger(k).ModInverse(NativeInteger(2 * n)).ConvertToInt();
+    std::vector<uint32_t> perm(n);
+    PrecomputeAutoMap(n, inverse, &perm);
+    return secret.AutomorphismTransform(inverse, perm);
+}
 
-// ---------------------------------------------------------------------------------------------
-// Key material
-// ---------------------------------------------------------------------------------------------
-
-// HMuxRot key (Definition 1 with gadget decomposition, Algorithm 5): the key switch targets
-// sigma^{-1}(s) and sigma is applied afterwards, so the decomposition is shared (hoisted) across
-// the B branches of one B-to-1 mux-rotate and ModDown is applied once per mux step.
-struct SHIPMuxKey {
-    EvalKey<DCRTPoly> body;
-    EvalKey<DCRTPoly> mask;
-    uint32_t automorphism = 1;
-    std::vector<uint32_t> permutation;
-};
-
-struct SHIPFactorKey {
-    uint32_t offset = 0;  // public rotation offset o (mod N/2)
-    // column[i][band] = Enc_QP(P * 1_{i = r0} * Rot_{o + r0}(M'_band)), i < theta
-    std::vector<std::array<QPPair, 4>> column;
-    // mux[t][d] selects a right rotation by theta * d * B^t if the t-th base-B digit of r1 equals d
-    std::vector<std::vector<SHIPMuxKey>> mux;
-};
-
-struct SHIPEncapsulationKey {
-    std::shared_ptr<ILNativeParams> paramsQ0;
-    std::shared_ptr<ILNativeParams> paramsP;
-    NativePoly bQ0, aQ0, bP, aP;  // Enc_{s_sparse}(p' * s_dense) mod q0 * p', EVALUATION format
-    NativeInteger pInvModQ0;
-};
-
-struct SHIPPackingPlan {
-    uint32_t babyStep   = 0;
-    uint32_t inputLevel = 0;
-    std::vector<Plaintext> diagonals;
-};
-
-class SHIPBootstrapKey {
-public:
-    SHIPParams params;
-    std::string denseTag;
-    std::string sparseTag;
-    uint32_t ringDim   = 0;
-    uint32_t slots     = 0;
-    uint32_t treeDepth = 0;
-    uint32_t leafExtraBits = 0;  // product-tree leaves have scale 2^(p + leafExtraBits)
-    SHIPEncapsulationKey encapsulation;
-    std::vector<SHIPFactorKey> factors;
-    std::map<uint32_t, std::vector<uint32_t>> columnPermutations;  // right rotation t -> automorphism map
-    std::shared_ptr<std::map<uint32_t, EvalKey<DCRTPoly>>> conjugation;
-    SHIPPackingPlan packing;
-};
-
-namespace {
-
-SHIPMuxKey MakeMuxKey(const CC& cc, const PrivateKey<DCRTPoly>& sk, uint32_t beta, int32_t rotation) {
-    const auto& secret  = sk->GetPrivateElement();
-    const auto params   = secret.GetParams();
-    const uint32_t n    = secret.GetRingDimension();
-    const uint32_t m    = 2 * n;
-    const uint32_t index = FindAutomorphismIndex2nComplex(rotation, m);
+SHIPMuxKey MakeMuxKey(const CC& cc, const DCRTPoly& secret, const std::shared_ptr<DCRTPoly::Params>& paramsQP,
+                      uint32_t beta, int32_t rotation, const SHIPSeed& seed, uint64_t id) {
+    const uint32_t n     = secret.GetRingDimension();
+    const uint32_t sizeQ = secret.GetNumOfElements();
     SHIPMuxKey key;
-    key.automorphism = index;
-    std::vector<uint32_t> inversePermutation(n);
+    key.automorphism = FindAutomorphismIndex2nComplex(rotation, 2 * n);
     key.permutation.resize(n);
-    PrecomputeAutoMap(n, index, &key.permutation);
-    const uint32_t inverse = NativeInteger(index).ModInverse(m).ConvertToInt();
-    PrecomputeAutoMap(n, inverse, &inversePermutation);
-    auto destination = std::make_shared<PrivateKeyImpl<DCRTPoly>>(cc);
-    destination->SetPrivateElement(secret.AutomorphismTransform(inverse, inversePermutation));
-    DCRTPoly constant(params, Format::COEFFICIENT, true);
+    PrecomputeAutoMap(n, key.automorphism, &key.permutation);
+    const DCRTPoly destination = ExtendToQP(InverseAutomorphism(secret, key.automorphism), paramsQP);
+    DCRTPoly constant(secret.GetParams(), Format::COEFFICIENT, true);
     for (size_t i = 0; i < constant.GetNumOfElements(); ++i) {
         auto limb = constant.GetElementAtIndex(i);
         limb[0]   = NativeInteger(beta);
         constant.SetElementAtIndex(i, std::move(limb));
     }
     constant.SetFormat(Format::EVALUATION);
-    auto bodySecret = std::make_shared<PrivateKeyImpl<DCRTPoly>>(cc);
-    bodySecret->SetPrivateElement(std::move(constant));
-    auto maskSecret = std::make_shared<PrivateKeyImpl<DCRTPoly>>(cc);
-    maskSecret->SetPrivateElement(beta ? secret : DCRTPoly(params, Format::EVALUATION, true));
-    key.body = cc->KeySwitchGen(bodySecret, destination);
-    key.mask = cc->KeySwitchGen(maskSecret, destination);
-    key.body->SetKeyTag(sk->GetKeyTag());  // tag of the final key (after sigma)
-    key.mask->SetKeyTag(sk->GetKeyTag());
+    const DCRTPoly zero(secret.GetParams(), Format::EVALUATION, true);
+    key.body = GenSwitchKey(cc, constant, destination, sizeQ, seed, id);
+    key.mask = GenSwitchKey(cc, beta ? secret : zero, destination, sizeQ, seed, id + 64);
     return key;
+}
+
+SHIPRotationKey MakeAutomorphismKey(const CC& cc, const DCRTPoly& secret,
+                                    const std::shared_ptr<DCRTPoly::Params>& paramsQP, uint32_t automorphism,
+                                    int32_t rotation, uint32_t qLimbs, const SHIPSeed& seed, uint64_t id) {
+    const uint32_t n = secret.GetRingDimension();
+    SHIPRotationKey key;
+    key.rotation     = rotation;
+    key.automorphism = automorphism;
+    key.permutation.resize(n);
+    PrecomputeAutoMap(n, automorphism, &key.permutation);
+    const DCRTPoly destination = ExtendToQP(InverseAutomorphism(secret, automorphism), paramsQP);
+    key.key                    = GenSwitchKey(cc, secret, destination, qLimbs, seed, id);
+    return key;
+}
+
+// Enc_QP(P * 2^extraBits * v): v slot-encoded with scaling factor P * 2^extraBits under the output secret.
+// round(m_i * P * 2^extraBits / Delta) from the exact Delta-encoding m_i; relative error <= 2^-log2(Delta).
+// After the product with a Delta-scaled phase and Rescale_P, the factor has scale 2^extraBits * Delta.
+SHIPColumnKey EncryptScaledByP(const CC& cc, const DCRTPoly& secretQP, const std::vector<double>& values,
+                               uint32_t S, uint32_t extraBits, const SHIPSeed& seed, uint64_t id) {
+    const auto params     = CkksParams(cc);
+    const auto paramsQP   = params->GetParamsQP();
+    const uint32_t bottom = params->GetElementParams()->GetParams().size() - 1;
+    DCRTPoly plain(paramsQP, Format::COEFFICIENT, true);
+    bool nonzero = false;
+    for (double v : values)
+        nonzero = nonzero || v != 0.0;
+    if (nonzero) {
+        auto pt      = cc->MakeCKKSPackedPlaintext(values, 1, bottom, nullptr, S);
+        int exponent = 0;
+        if (std::frexp(pt->GetScalingFactor(), &exponent) != 0.5 || exponent < 2)
+            OPENFHE_THROW("SHIP requires a power-of-two CKKS scaling factor");
+        const uint32_t deltaBits = exponent - 1;
+        auto encoded             = pt->GetElement<DCRTPoly>();
+        encoded.SetFormat(Format::COEFFICIENT);
+        const auto limb       = encoded.GetElementAtIndex(0);
+        const auto q0         = limb.GetModulus();
+        const BigInteger P    = params->GetParamsP()->GetModulus();
+        const BigInteger half = BigInteger(1).LShift(deltaBits - 1);
+        std::vector<NativePoly> limbs;
+        for (size_t k = 0; k < plain.GetNumOfElements(); ++k)
+            limbs.push_back(plain.GetElementAtIndex(k));
+        for (size_t i = 0; i < limb.GetLength(); ++i) {
+            if (limb[i] == NativeInteger(0))
+                continue;
+            const bool negative      = limb[i] > (q0 >> 1);
+            const uint64_t magnitude = (negative ? q0 - limb[i] : limb[i]).ConvertToInt<uint64_t>();
+            const BigInteger scaled  = ((BigInteger(magnitude) * P).LShift(extraBits) + half).RShift(deltaBits);
+            for (auto& out : limbs) {
+                const auto r = out.GetModulus();
+                NativeInteger value(scaled.Mod(BigInteger(r.ConvertToInt<uint64_t>())).ConvertToInt<uint64_t>());
+                out[i] = (negative && value != NativeInteger(0)) ? r - value : value;
+            }
+        }
+        for (size_t k = 0; k < limbs.size(); ++k)
+            plain.SetElementAtIndex(k, std::move(limbs[k]));
+    }
+    plain.SetFormat(Format::EVALUATION);
+    SHIPColumnKey key;
+    key.id = id;
+    key.a  = SeededUniform(paramsQP, seed, id);
+    DCRTPoly e(params->GetDiscreteGaussianGenerator(), paramsQP, Format::EVALUATION);
+    key.b = e - key.a * secretQP + plain;
+    return key;
+}
+
+// Inner product of hoisted digits with a switching key, result over Q_l P (no ModDown).
+std::array<DCRTPoly, 2> InnerExt(const std::vector<DCRTPoly>& digits, const SHIPSwitchKey& key) {
+    const auto paramsQlP   = digits[0].GetParams();
+    const uint32_t sizeQlP = paramsQlP->GetParams().size();
+    const uint32_t sizeP   = key.b[0].GetNumOfElements() - key.qLimbs;
+    const uint32_t sizeQl  = sizeQlP - sizeP;
+    if (digits.size() > key.b.size() || sizeQl > key.qLimbs)
+        OPENFHE_THROW("SHIP: switching key does not cover this level");
+    DCRTPoly c0(paramsQlP, Format::EVALUATION, true), c1(paramsQlP, Format::EVALUATION, true);
+    for (size_t j = 0; j < digits.size(); ++j) {
+        const auto& cj = digits[j];
+        for (uint32_t i = 0; i < sizeQlP; ++i) {
+            const uint32_t idx = i < sizeQl ? i : key.qLimbs + (i - sizeQl);
+            const auto& cji    = cj.GetElementAtIndex(i);
+            c0.SetElementAtIndex(i, c0.GetElementAtIndex(i) + cji * key.b[j].GetElementAtIndex(idx));
+            c1.SetElementAtIndex(i, c1.GetElementAtIndex(i) + cji * key.a[j].GetElementAtIndex(idx));
+        }
+    }
+    return {std::move(c0), std::move(c1)};
 }
 
 // sum over the B branches of one mux step, sharing the decompositions; one ModDown.
 CT MuxRotate(const CC& cc, const std::vector<std::vector<SHIPMuxKey>>& steps, CT input) {
     const auto scheme = cc->GetScheme();
     for (const auto& branches : steps) {
-        auto body           = scheme->EvalKeySwitchPrecomputeCore(input->GetElements()[0], input->GetCryptoParameters());
-        auto mask           = scheme->EvalKeySwitchPrecomputeCore(input->GetElements()[1], input->GetCryptoParameters());
-        const auto paramsQl = input->GetElements()[0].GetParams();
+        auto body = scheme->EvalKeySwitchPrecomputeCore(input->GetElements()[0], input->GetCryptoParameters());
+        auto mask = scheme->EvalKeySwitchPrecomputeCore(input->GetElements()[1], input->GetCryptoParameters());
         std::vector<DCRTPoly> sum;
         for (const auto& key : branches) {
-            auto b = scheme->EvalFastKeySwitchCoreExt(body, key.body, paramsQl);
-            auto a = scheme->EvalFastKeySwitchCoreExt(mask, key.mask, paramsQl);
-            std::vector<DCRTPoly> term{(*b)[0] + (*a)[0], (*b)[1] + (*a)[1]};
+            auto b = InnerExt(*body, key.body);
+            auto a = InnerExt(*mask, key.mask);
+            std::vector<DCRTPoly> term{b[0] + a[0], b[1] + a[1]};
             if (key.automorphism != 1)
                 for (auto& element : term)
                     element = element.AutomorphismTransform(key.automorphism, key.permutation);
@@ -298,9 +458,30 @@ CT MuxRotate(const CC& cc, const std::vector<std::vector<SHIPMuxKey>>& steps, CT
     return input;
 }
 
+// Automorphism with a SHIP key, given the hoisted decomposition of the second component.
+CT ApplyAutomorphism(const CC& cc, const CT& input, const std::vector<DCRTPoly>& digitsA,
+                     const SHIPRotationKey& key) {
+    const auto scheme = cc->GetScheme();
+    auto ext          = InnerExt(digitsA, key.key);
+    auto extended     = input->CloneEmpty();
+    extended->SetElements({std::move(ext[0]), std::move(ext[1])});
+    auto down  = scheme->KeySwitchDown(extended);
+    DCRTPoly b = input->GetElements()[0] + down->GetElements()[0];
+    DCRTPoly a = down->GetElements()[1];
+    auto out   = input->CloneEmpty();
+    out->SetElements({b.AutomorphismTransform(key.automorphism, key.permutation),
+                      a.AutomorphismTransform(key.automorphism, key.permutation)});
+    return out;
+}
+
+CT ApplyAutomorphism(const CC& cc, const CT& input, const SHIPRotationKey& key) {
+    auto digits = cc->GetScheme()->EvalKeySwitchPrecomputeCore(input->GetElements()[1], input->GetCryptoParameters());
+    return ApplyAutomorphism(cc, input, *digits, key);
+}
+
 // FIXEDMANUAL assumes every rescaling prime equals Delta. With small NTT-friendly primes the
 // deviation |q/Delta - 1| reaches a few percent and compounds through the product tree. All leaves
-// enter at level 0 with scale exactly Delta, so the true root scale is deterministic: simulate the
+// enter at level 0 with a known scale, so the true root scale is deterministic: simulate the
 // pairing of ProductTree and return (true root scale) / Delta.
 long double ProductTreeScaleRatio(size_t leaves, long double leafScale, long double delta,
                                   const std::vector<long double>& moduli) {
@@ -324,9 +505,9 @@ CT ProductTree(const CC& cc, std::vector<CT> terms) {
         std::vector<CT> next((terms.size() + 1) / 2);
 #pragma omp parallel for schedule(dynamic)
         for (size_t i = 0; i < terms.size() / 2; ++i) {
-            auto a             = terms[2 * i]->Clone();
-            auto b             = terms[2 * i + 1]->Clone();
-            const auto target  = std::max(a->GetLevel(), b->GetLevel());
+            auto a            = terms[2 * i]->Clone();
+            auto b            = terms[2 * i + 1]->Clone();
+            const auto target = std::max(a->GetLevel(), b->GetLevel());
             if (a->GetLevel() < target)
                 cc->LevelReduceInPlace(a, nullptr, target - a->GetLevel());
             if (b->GetLevel() < target)
@@ -367,37 +548,42 @@ CT MultiplyByHalfMonomial(const CT& input, bool inverse) {
     return result;
 }
 
-// S2C: slots mu -> coefficients (Re mu | Im mu), i.e. multiplication of the slot vector by
-// V[k][j] = exp(2 pi i 5^k j / (2N)) (paper Section 3.2, dense matrix with BSGS, one level).
-SHIPPackingPlan MakePackingPlan(const CC& cc, const PrivateKey<DCRTPoly>& sk, uint32_t level) {
-    const uint32_t S    = cc->GetRingDimension() / 2;
-    const uint32_t cycl = 4 * S;
-    uint32_t baby       = 1;
+uint32_t BabyStep(uint32_t S) {
+    uint32_t baby = 1;
     while (baby * baby < S)
         baby <<= 1;
-    SHIPPackingPlan plan;
-    plan.babyStep   = baby;
-    plan.inputLevel = level;
+    return baby;
+}
+
+std::vector<int32_t> PackingRotations(uint32_t S) {
+    const uint32_t baby = BabyStep(S);
     std::vector<int32_t> rotations;
     for (uint32_t j = 1; j < baby; ++j)
         rotations.push_back(j);
     for (uint32_t g = baby; g < S; g += baby)
         rotations.push_back(g);
-    cc->EvalRotateKeyGen(sk, rotations);
+    return rotations;
+}
+
+// S2C: slots mu -> coefficients (Re mu | Im mu), i.e. multiplication of the slot vector by
+// V[k][j] = exp(2 pi i 5^k j / (2N)) (paper Section 3.2, dense matrix with BSGS, one level).
+// The diagonals are scaled by q/Delta (exact output scale) and by 1/messageBound.
+std::vector<Plaintext> PackingDiagonals(const CC& cc, uint32_t level, double messageBound) {
+    const uint32_t S    = cc->GetRingDimension() / 2;
+    const uint32_t cycl = 4 * S;
+    const uint32_t baby = BabyStep(S);
     std::vector<uint32_t> exponents(S);
     uint64_t e = 1;
     for (auto& x : exponents) {
         x = e;
         e = (5 * e) % cycl;
     }
-    const double tau = 2 * std::acos(-1.0);
-    // The rescale after the diagonal products removes the top prime at this level; scale the
-    // diagonals by q/Delta so that the output scale equals the input scale exactly.
+    const double tau       = 2 * std::acos(-1.0);
     const auto params      = CkksParams(cc);
     const auto& moduli     = params->GetElementParams()->GetParams();
     const double rescaleBy = moduli[moduli.size() - 1 - level]->GetModulus().ConvertToDouble();
-    const double ratio     = rescaleBy / params->GetScalingFactorReal(level);
-    plan.diagonals.resize(S);
+    const double ratio     = rescaleBy / params->GetScalingFactorReal(level) / messageBound;
+    std::vector<Plaintext> diagonals(S);
     for (uint32_t r = 0; r < S; ++r) {
         const uint32_t giant = (r / baby) * baby;
         std::vector<C> d(S);
@@ -407,17 +593,18 @@ SHIPPackingPlan MakePackingPlan(const CC& cc, const PrivateKey<DCRTPoly>& sk, ui
             const uint32_t exponent = (uint64_t(exponents[row]) * column) % cycl;
             d[k]                    = std::polar(ratio, tau * exponent / cycl);
         }
-        plan.diagonals[r] = cc->MakeCKKSPackedPlaintext(d, 1, level, nullptr, S);
+        diagonals[r] = cc->MakeCKKSPackedPlaintext(d, 1, level, nullptr, S);
     }
-    return plan;
+    return diagonals;
 }
 
 CT ApplyPacking(const CC& cc, const CT& input, const SHIPPackingPlan& plan, uint32_t S) {
     std::vector<CT> baby(plan.babyStep);
     baby[0]     = input;
-    auto digits = cc->EvalFastRotationPrecompute(input);
+    auto digits = cc->GetScheme()->EvalKeySwitchPrecomputeCore(input->GetElements()[1], input->GetCryptoParameters());
+#pragma omp parallel for schedule(dynamic)
     for (uint32_t j = 1; j < plan.babyStep; ++j)
-        baby[j] = cc->EvalFastRotation(input, j, 4 * S, digits);
+        baby[j] = ApplyAutomorphism(cc, input, *digits, plan.rotations.at(j));
     const uint32_t groups = (S + plan.babyStep - 1) / plan.babyStep;
     std::vector<CT> partial(groups);
 #pragma omp parallel for schedule(dynamic)
@@ -429,7 +616,7 @@ CT ApplyPacking(const CC& cc, const CT& input, const SHIPPackingPlan& plan, uint
             group     = group ? cc->EvalAdd(group, term) : term;
         }
         cc->RescaleInPlace(group);
-        partial[gi] = g ? cc->EvalRotate(group, g) : group;
+        partial[gi] = g ? ApplyAutomorphism(cc, group, plan.rotations.at(g)) : group;
     }
     CT result = partial[0];
     for (uint32_t gi = 1; gi < groups; ++gi)
@@ -455,8 +642,8 @@ CT Encapsulate(const CT& input, const SHIPBootstrapKey& key) {
     aP.SwitchModulus(k.paramsP->GetModulus(), k.paramsP->GetRootOfUnity(), 0, 0);
     aQ0.SetFormat(Format::EVALUATION);
     aP.SetFormat(Format::EVALUATION);
-    auto newB = b + ModDownByP(aQ0 * k.bQ0, aP * k.bP, k);
-    auto newA = ModDownByP(aQ0 * k.aQ0, aP * k.aP, k);
+    auto newB     = b + ModDownByP(aQ0 * k.bQ0, aP * k.bP, k);
+    auto newA     = ModDownByP(aQ0 * k.aQ0, aP * k.aP, k);
     auto elements = input->GetElements();
     elements[0].SetElementAtIndex(0, std::move(newB));
     elements[1].SetElementAtIndex(0, std::move(newA));
@@ -464,6 +651,133 @@ CT Encapsulate(const CT& input, const SHIPBootstrapKey& key) {
     result->SetElements(std::move(elements));
     result->SetKeyTag(key.sparseTag);
     return result;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Serialization helpers
+// ---------------------------------------------------------------------------------------------
+
+void SaveSwitchKey(OutArchive& ar, const SHIPSwitchKey& k, bool compact) {
+    ar(k.qLimbs, k.id, static_cast<uint32_t>(k.b.size()));
+    for (const auto& p : k.b)
+        ar(p);
+    if (!compact)
+        for (const auto& p : k.a)
+            ar(p);
+}
+
+SHIPSwitchKey LoadSwitchKey(InArchive& ar, bool compact, const CC& cc, const SHIPSeed& seed) {
+    SHIPSwitchKey k;
+    uint32_t count = 0;
+    ar(k.qLimbs, k.id, count);
+    k.b.resize(count);
+    for (auto& p : k.b)
+        ar(p);
+    if (compact) {
+        const auto sub = SubParams(cc, k.qLimbs);
+        for (uint32_t j = 0; j < count; ++j)
+            k.a.push_back(SeededUniform(sub, seed, k.id + j));
+    }
+    else {
+        k.a.resize(count);
+        for (auto& p : k.a)
+            ar(p);
+    }
+    return k;
+}
+
+void SaveRotationKey(OutArchive& ar, const SHIPRotationKey& k, bool compact) {
+    ar(k.rotation, k.automorphism);
+    SaveSwitchKey(ar, k.key, compact);
+}
+
+SHIPRotationKey LoadRotationKey(InArchive& ar, bool compact, const CC& cc, const SHIPSeed& seed) {
+    SHIPRotationKey k;
+    ar(k.rotation, k.automorphism);
+    k.key                = LoadSwitchKey(ar, compact, cc, seed);
+    const uint32_t n     = cc->GetRingDimension();
+    k.permutation.resize(n);
+    PrecomputeAutoMap(n, k.automorphism, &k.permutation);
+    return k;
+}
+
+void SaveFactor(OutArchive& ar, const SHIPFactorKey& f, bool compact) {
+    ar(f.offset, static_cast<uint32_t>(f.column.size()), static_cast<uint32_t>(f.mux.size()));
+    for (const auto& bands : f.column)
+        for (const auto& c : bands) {
+            ar(c.id, c.b);
+            if (!compact)
+                ar(c.a);
+        }
+    for (const auto& step : f.mux) {
+        ar(static_cast<uint32_t>(step.size()));
+        for (const auto& mk : step) {
+            ar(mk.automorphism);
+            SaveSwitchKey(ar, mk.body, compact);
+            SaveSwitchKey(ar, mk.mask, compact);
+        }
+    }
+}
+
+SHIPFactorKey LoadFactor(InArchive& ar, bool compact, const CC& cc, const SHIPSeed& seed) {
+    SHIPFactorKey f;
+    uint32_t columns = 0, steps = 0;
+    ar(f.offset, columns, steps);
+    const auto paramsQP = CkksParams(cc)->GetParamsQP();
+    f.column.resize(columns);
+    for (auto& bands : f.column)
+        for (auto& c : bands) {
+            ar(c.id, c.b);
+            if (compact)
+                c.a = SeededUniform(paramsQP, seed, c.id);
+            else
+                ar(c.a);
+        }
+    const uint32_t n = cc->GetRingDimension();
+    f.mux.resize(steps);
+    for (auto& step : f.mux) {
+        uint32_t branches = 0;
+        ar(branches);
+        step.resize(branches);
+        for (auto& mk : step) {
+            ar(mk.automorphism);
+            mk.body = LoadSwitchKey(ar, compact, cc, seed);
+            mk.mask = LoadSwitchKey(ar, compact, cc, seed);
+            mk.permutation.resize(n);
+            PrecomputeAutoMap(n, mk.automorphism, &mk.permutation);
+        }
+    }
+    return f;
+}
+
+std::string FactorPath(const std::string& directory, uint32_t index) {
+    std::ostringstream name;
+    name << directory << "/factor-" << index << ".ship";
+    return name.str();
+}
+
+std::shared_ptr<const SHIPFactorKey> GetFactor(const CC& cc, const SHIPBootstrapKey& key, uint32_t index) {
+    if (key.factorDirectory.empty())
+        return std::shared_ptr<const SHIPFactorKey>(&key.factors[index], [](const SHIPFactorKey*) {});
+    std::ifstream file(FactorPath(key.factorDirectory, index), std::ios::binary);
+    if (!file)
+        OPENFHE_THROW("SHIP: cannot open factor key file " + FactorPath(key.factorDirectory, index));
+    InArchive ar(file);
+    bool compact = false;
+    ar(compact);
+    return std::make_shared<SHIPFactorKey>(LoadFactor(ar, compact, cc, key.seed));
+}
+
+void ComputeColumnPermutations(SHIPBootstrapKey& key, uint32_t offset, uint32_t theta) {
+    const uint32_t S = key.slots, N = key.ringDim;
+    for (uint32_t i = 0; i < theta; ++i) {
+        const uint32_t t = (offset + i) % S;
+        if (!key.columnPermutations.count(t)) {
+            std::vector<uint32_t> perm(N);
+            PrecomputeAutoMap(N, FindAutomorphismIndex2nComplex(-static_cast<int32_t>(t), 2 * N), &perm);
+            key.columnPermutations.emplace(t, std::move(perm));
+        }
+    }
 }
 
 // Algorithm 1 with Algorithm 4 (column + mux) and masks over PQ (Sections 4.1, 4.4): no masking level.
@@ -493,17 +807,17 @@ CT HalfBootstrap(const CC& cc, const CT& input, const SHIPBootstrapKey& key, dou
         phases[3][i] = std::conj(phases[2][i]);
         initial[i]   = C(0, -gamma / (4 * static_cast<double>(pi))) * omega(b[i]);  // gamma / (4 i pi) * omega^b
     }
-    // Exact compensation of the product-tree scale drift through the public factor pt_0.
+    // Exact compensation of the product-tree scale drift and of messageBound through pt_0.
     {
         std::vector<long double> moduli;
         for (const auto& q : params->GetElementParams()->GetParams())
             moduli.push_back(q->GetModulus().ConvertToDouble());
         const long double delta     = params->GetScalingFactorReal(0);
         const long double leafScale = std::ldexp(delta, key.leafExtraBits);
-        const long double kappa     = ProductTreeScaleRatio(key.factors.size() + 1, leafScale, delta, moduli);
-        // pt_0 enters with scale 2^extra * Delta like the other leaves; the root lands exactly at Delta.
+        const long double kappa     = ProductTreeScaleRatio(key.numFactors + 1, leafScale, delta, moduli);
+        const long double factor    = std::ldexp(1.0L, key.leafExtraBits) / kappa * key.params.messageBound;
         for (auto& v : initial)
-            v *= static_cast<double>(std::ldexp(1.0L, key.leafExtraBits) / kappa);
+            v *= static_cast<double>(factor);
     }
     // pt_0 as a trivial ciphertext at the top level (no public key needed).
     auto pt0     = cc->MakeCKKSPackedPlaintext(initial, 1, 0, nullptr, S);
@@ -524,29 +838,29 @@ CT HalfBootstrap(const CC& cc, const CT& input, const SHIPBootstrapKey& key, dou
     }
     const auto scheme = cc->GetScheme();
     const uint32_t m  = 2 * cc->GetRingDimension();
-    std::vector<CT> factors(key.factors.size() + 1);
+    std::vector<CT> factors(key.numFactors + 1);
     factors[0] = trivial;
 #pragma omp parallel for schedule(dynamic)
-    for (size_t f = 0; f < key.factors.size(); ++f) {
-        const auto& fk = key.factors[f];
+    for (uint32_t f = 0; f < key.numFactors; ++f) {
+        const auto fk = GetFactor(cc, key, f);
         DCRTPoly sb(paramsQP, Format::EVALUATION, true), sa(paramsQP, Format::EVALUATION, true);
-        for (uint32_t i = 0; i < fk.column.size(); ++i) {
-            const uint32_t t     = (fk.offset + i) % S;
+        for (uint32_t i = 0; i < fk->column.size(); ++i) {
+            const uint32_t t     = (fk->offset + i) % S;
             const uint32_t index = FindAutomorphismIndex2nComplex(-static_cast<int32_t>(t), m);
             const auto& perm     = key.columnPermutations.at(t);
             for (size_t band = 0; band < 4; ++band) {
                 const auto rotated = t ? phaseQP[band].AutomorphismTransform(index, perm) : phaseQP[band];
-                sb += fk.column[i][band][0] * rotated;
-                sa += fk.column[i][band][1] * rotated;
+                sb += fk->column[i][band].b * rotated;
+                sa += fk->column[i][band].a * rotated;
             }
         }
         auto extended = trivial->CloneEmpty();
         extended->SetElements({std::move(sb), std::move(sa)});
-        auto selected = scheme->KeySwitchDown(extended);  // Rescale_P: level stays 0
-        factors[f + 1] = MuxRotate(cc, fk.mux, selected);
+        auto selected  = scheme->KeySwitchDown(extended);  // Rescale_P: level stays 0
+        factors[f + 1] = MuxRotate(cc, fk->mux, selected);
     }
     auto root      = ProductTree(cc, std::move(factors));
-    auto conjugate = cc->EvalAutomorphism(root, m - 1, *key.conjugation);
+    auto conjugate = ApplyAutomorphism(cc, root, key.conjugation);
     return cc->EvalAdd(root, conjugate);
 }
 
@@ -559,7 +873,29 @@ std::map<std::string, std::shared_ptr<SHIPBootstrapKey>>& KeyStore() {
     return store;
 }
 
+uint32_t SparseSecretBound(uint32_t ringDim) {
+    // Largest log2(q0 p') for which the dense-to-sparse switching key (h = 31) keeps 128-bit security.
+    // The paper (Section 5.2) gives 55, 100, 105 for N = 2^13, 2^14, 2^15. The lattice estimator
+    // (commit d8c00b48, 2026-08-19, LWE.estimate attacks) gives 2^121.4 and 2^126.2 for the first two
+    // (bdd_mitm_hybrid), so the bounds below are the estimator values: 42 -> 2^129.8, 88 -> 2^130.2,
+    // 105 -> 2^148.7 (research/ship/security).
+    switch (ringDim) {
+        case 1 << 13:
+            return 42;
+        case 1 << 14:
+            return 88;
+        case 1 << 15:
+            return 105;
+        default:
+            return 0;
+    }
+}
+
 }  // namespace
+
+// ---------------------------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------------------------
 
 uint32_t SHIPProductTreeDepth(uint32_t hammingWeight) {
     return CeilLog(uint64_t(hammingWeight) + 1, 2);
@@ -574,7 +910,6 @@ SHIPContextSpec SHIPContextSpec::LL13() {
     s.scalingModBits = 20;
     s.bootModBits    = 24;
     s.multLevels     = 1;
-    s.hammingWeight  = 31;
     s.numLargeDigits = 8;
     s.auxModBits     = 28;
     return s;
@@ -589,10 +924,51 @@ SHIPContextSpec SHIPContextSpec::LL14() {
     s.scalingModBits = 37;
     s.bootModBits    = 42;
     s.multLevels     = 1;
-    s.hammingWeight  = 31;
     s.numLargeDigits = 4;
     s.auxModBits     = 50;
     return s;
+}
+
+SHIPContextSpec SHIPContextSpec::HT14() {
+    // Paper HT14: Base 28, S2C 23, Mult 23 x 9, Boot 25 x 5, Aux 29 x 2, dnum 8, log PQ = 438.
+    // Here: Base 28, S2C/Mult 23, Boot 24 x 4 + 25, Aux 55 x 1, dnum 8 (one auxiliary prime suffices).
+    SHIPContextSpec s;
+    s.ringDim        = 1 << 14;
+    s.firstModBits   = 28;
+    s.scalingModBits = 23;
+    s.bootModBits    = 24;
+    s.multLevels     = 9;
+    s.numLargeDigits = 8;
+    s.auxModBits     = 55;
+    return s;
+}
+
+SHIPContextSpec SHIPContextSpec::HT15() {
+    // Paper HT15: Base 50, S2C 39, Mult 39 x 9, Boot 46 x 5, Aux 53 x 4, dnum 4, log PQ = 881.
+    // Here: Base 50, S2C/Mult 39, Boot 46 x 4 + 53, Aux 50 x 3, dnum 6 (fits the 881-bit budget).
+    SHIPContextSpec s;
+    s.ringDim        = 1 << 15;
+    s.firstModBits   = 50;
+    s.scalingModBits = 39;
+    s.bootModBits    = 46;
+    s.multLevels     = 9;
+    s.numLargeDigits = 6;
+    s.auxModBits     = 50;
+    return s;
+}
+
+SHIPParams SHIPParams::Recommended(const SHIPContextSpec& spec) {
+    const uint32_t bound = SparseSecretBound(spec.ringDim);
+    if (!bound)
+        OPENFHE_THROW("SHIPParams::Recommended: no published sparse-secret bound for this ring dimension");
+    SHIPParams p;
+    p.hammingWeight        = spec.hammingWeight;
+    p.window               = std::max<uint32_t>(175, spec.ringDim / (2 * spec.hammingWeight));
+    p.columnSize           = spec.ringDim == (1 << 13) ? 6 : spec.ringDim == (1 << 14) ? 9 : 17;
+    p.muxBase              = 4;
+    p.encapsulationModBits = 0;  // chosen from the actual q0 by SHIPKeyGen
+    p.realOnly             = true;
+    return p;
 }
 
 uint32_t SHIPLogQP(const CryptoContext<DCRTPoly>& cc) {
@@ -601,7 +977,8 @@ uint32_t SHIPLogQP(const CryptoContext<DCRTPoly>& cc) {
 
 CryptoContext<DCRTPoly> GenSHIPCryptoContext(const SHIPContextSpec& spec) {
     if (spec.ringDim < 16 || (spec.ringDim & (spec.ringDim - 1)) || spec.firstModBits <= spec.scalingModBits ||
-        spec.numLargeDigits == 0 || spec.auxModBits == 0)
+        spec.numLargeDigits == 0 || spec.auxModBits == 0 ||
+        (spec.bootModBits > spec.scalingModBits && 2 * spec.bootModBits - spec.scalingModBits > 60))
         OPENFHE_THROW("Invalid SHIP context specification");
     const uint32_t depth = 1 + spec.multLevels + SHIPProductTreeDepth(spec.hammingWeight);
     CCParams<CryptoContextCKKSRNS> p;
@@ -667,7 +1044,30 @@ CryptoContext<DCRTPoly> GenSHIPCryptoContext(const SHIPContextSpec& spec) {
     return cc;
 }
 
-std::shared_ptr<SHIPBootstrapKey> SHIPKeyGen(const PrivateKey<DCRTPoly>& privateKey, const SHIPParams& sp) {
+uint64_t SHIPEstimateKeyBytes(const CryptoContext<DCRTPoly>& cc, const SHIPParams& sp) {
+    const auto params     = CkksParams(cc);
+    const uint64_t N      = cc->GetRingDimension();
+    const uint64_t S      = N / 2;
+    const uint64_t sizeQ  = params->GetElementParams()->GetParams().size();
+    const uint64_t sizeP  = params->GetParamsP()->GetParams().size();
+    const uint64_t alpha  = params->GetNumPerPartQ();
+    const uint64_t dnum   = (sizeQ + alpha - 1) / alpha;
+    const uint64_t word   = sizeof(NativeInteger);
+    const uint64_t R      = sp.window ? 2 * sp.window : S;
+    const uint64_t theta  = std::min<uint64_t>(sp.columnSize, R);
+    const uint64_t digits = CeilLog((R + theta - 1) / theta, sp.muxBase);
+    const uint64_t qp     = N * (sizeQ + sizeP) * word;
+    const uint64_t perFactor = theta * 4 * 2 * qp + digits * sp.muxBase * 2 * dnum * 2 * qp;
+    const uint64_t tree      = SHIPProductTreeDepth(sp.hammingWeight);
+    const uint64_t rotations = PackingRotations(S).size() * ((2 + alpha - 1) / alpha) * 2 * N * (2 + sizeP) * word;
+    const uint64_t conjLimbs = sizeQ - tree;
+    const uint64_t conj      = ((conjLimbs + alpha - 1) / alpha) * 2 * N * (conjLimbs + sizeP) * word;
+    const uint64_t diagonals = S * 2 * N * word;
+    return sp.hammingWeight * perFactor + rotations + conj + diagonals;
+}
+
+std::shared_ptr<SHIPBootstrapKey> SHIPKeyGen(const PrivateKey<DCRTPoly>& privateKey, const SHIPParams& sp,
+                                             const std::string& factorDirectory) {
     if (!privateKey)
         OPENFHE_THROW("SHIPKeyGen: null private key");
     const CC cc       = privateKey->GetCryptoContext();
@@ -679,7 +1079,8 @@ std::shared_ptr<SHIPBootstrapKey> SHIPKeyGen(const PrivateKey<DCRTPoly>& private
     if (cc->GetEncodingParams()->GetBatchSize() != S)
         OPENFHE_THROW("SHIP requires full packing (batch size N/2)");
     if (sp.hammingWeight == 0 || sp.hammingWeight > N || sp.columnSize == 0 || sp.muxBase < 2 ||
-        2 * sp.window > N || sp.encapsulationModBits < 20 || sp.encapsulationModBits > 60)
+        2 * sp.window > N || (sp.encapsulationModBits != 0 && (sp.encapsulationModBits < 17 || sp.encapsulationModBits > 60)) ||
+        !(sp.messageBound >= 1.0) || !std::isfinite(sp.messageBound))
         OPENFHE_THROW("Invalid SHIP parameters");
     const uint32_t sizeQ     = params->GetElementParams()->GetParams().size();
     const uint32_t treeDepth = SHIPProductTreeDepth(sp.hammingWeight);
@@ -692,14 +1093,17 @@ std::shared_ptr<SHIPBootstrapKey> SHIPKeyGen(const PrivateKey<DCRTPoly>& private
         OPENFHE_THROW("SHIPKeyGen: call EvalMultKeyGen for this key first");
     }
 
-    auto key        = std::make_shared<SHIPBootstrapKey>();
-    key->params     = sp;
-    key->denseTag   = privateKey->GetKeyTag();
-    key->sparseTag  = privateKey->GetKeyTag() + "#ship-sparse";
-    key->ringDim    = N;
-    key->slots      = S;
-    key->treeDepth  = treeDepth;
-    auto& prng      = PseudoRandomNumberGenerator::GetPRNG();
+    auto key       = std::make_shared<SHIPBootstrapKey>();
+    key->params    = sp;
+    key->context   = cc;
+    key->denseTag  = privateKey->GetKeyTag();
+    key->sparseTag = privateKey->GetKeyTag() + "#ship-sparse";
+    key->ringDim   = N;
+    key->slots     = S;
+    key->treeDepth = treeDepth;
+    auto& prng     = PseudoRandomNumberGenerator::GetPRNG();
+    for (auto& w : key->seed)
+        w = prng();
 
     // Sparse secret with regularly spaced nonzero coefficients (Section 5.1).
     // position_k = (o_k + r_k) mod N with public o_k and secret r_k < R.
@@ -738,13 +1142,21 @@ std::shared_ptr<SHIPBootstrapKey> SHIPKeyGen(const PrivateKey<DCRTPoly>& private
 
     // Dense-to-sparse encapsulation key modulo q0 * p'.
     {
-        auto denseLimb   = privateKey->GetPrivateElement().GetElementAtIndex(0);
-        auto paramsQ0    = denseLimb.GetParams();
-        const auto q0    = paramsQ0->GetModulus();
+        auto denseLimb = privateKey->GetPrivateElement().GetElementAtIndex(0);
+        auto paramsQ0  = denseLimb.GetParams();
+        const auto q0  = paramsQ0->GetModulus();
         std::set<NativeInteger> taken;
         for (const auto& pr : params->GetParamsQP()->GetParams())
             taken.insert(pr->GetModulus());
-        NativeInteger pPrime = LastPrime<NativeInteger>(sp.encapsulationModBits, 2 * N);
+        uint32_t pBits = sp.encapsulationModBits;
+        if (pBits == 0) {
+            const uint32_t bound = SparseSecretBound(N);
+            if (!bound || bound < q0.GetMSB() + 17)
+                OPENFHE_THROW("SHIPKeyGen: no published sparse-secret bound to choose p' for this ring dimension");
+            pBits = std::min<uint32_t>(60, bound - q0.GetMSB());
+        }
+        key->params.encapsulationModBits = pBits;
+        NativeInteger pPrime = LastPrime<NativeInteger>(pBits, 2 * N);
         while (taken.count(pPrime))
             pPrime = PreviousPrime<NativeInteger>(pPrime, 2 * N);
         auto paramsP = std::make_shared<ILNativeParams>(2 * N, pPrime, RootOfUnity<NativeInteger>(2 * N, pPrime));
@@ -765,14 +1177,14 @@ std::shared_ptr<SHIPBootstrapKey> SHIPKeyGen(const PrivateKey<DCRTPoly>& private
         NativePoly aQ0(uniform, paramsQ0, Format::EVALUATION);
         NativePoly aP(uniform, paramsP, Format::EVALUATION);
         const NativeInteger pModQ0 = pPrime.Mod(q0);
-        auto& enc     = key->encapsulation;
-        enc.paramsQ0  = paramsQ0;
-        enc.paramsP   = paramsP;
-        enc.bQ0       = eQ0 - aQ0 * sparseQ0 + denseLimb * pModQ0;
-        enc.aQ0       = std::move(aQ0);
-        enc.bP        = eP - aP * sparseP;
-        enc.aP        = std::move(aP);
-        enc.pInvModQ0 = pModQ0.ModInverse(q0);
+        auto& enc                  = key->encapsulation;
+        enc.paramsQ0               = paramsQ0;
+        enc.paramsP                = paramsP;
+        enc.bQ0                    = eQ0 - aQ0 * sparseQ0 + denseLimb * pModQ0;
+        enc.aQ0                    = std::move(aQ0);
+        enc.bP                     = eP - aP * sparseP;
+        enc.aP                     = std::move(aP);
+        enc.pInvModQ0              = pModQ0.ModInverse(q0);
     }
 
     // Product-tree leaves at the scale of the top (boot) primes (paper Table 2: Boot primes > S2C/Mult).
@@ -781,35 +1193,36 @@ std::shared_ptr<SHIPBootstrapKey> SHIPKeyGen(const PrivateKey<DCRTPoly>& private
         const double scaleBits = std::log2(params->GetScalingFactorReal(0));
         key->leafExtraBits     = topBits > scaleBits ? static_cast<uint32_t>(std::lround(topBits - scaleBits)) : 0;
     }
+
     // Column (with fused masks over PQ) and mux keys per nonzero coefficient.
     const auto paramsQP     = params->GetParamsQP();
-    const DCRTPoly secretQP = SecretOverQP(privateKey, paramsQP);
+    const DCRTPoly& secret  = privateKey->GetPrivateElement();
+    const DCRTPoly secretQP = ExtendToQP(secret, paramsQP);
     const uint32_t theta    = std::min(sp.columnSize, R);
     const uint64_t R1       = (R + theta - 1) / theta;
     const uint32_t digits   = CeilLog(R1, sp.muxBase);
-    const uint32_t m        = 2 * N;
     const std::vector<double> zero(S, 0.0);
-    key->factors.resize(h);
+    key->numFactors      = h;
+    key->factorDirectory = factorDirectory;
+    if (!factorDirectory.empty())
+        std::filesystem::create_directories(factorDirectory);
+    else
+        key->factors.resize(h);
     for (uint32_t k = 0; k < h; ++k) {
-        auto& fk         = key->factors[k];
-        fk.offset        = offsets[k] % S;
-        const uint32_t r = secrets[k];
+        SHIPFactorKey fk;
+        fk.offset         = offsets[k] % S;
+        const uint32_t r  = secrets[k];
         const uint32_t r0 = r % theta;
         uint64_t r1       = r / theta;
         const auto masks  = PreRotationMasks(positions[k], signs[k], S);
+        ComputeColumnPermutations(*key, fk.offset, theta);
         fk.column.resize(theta);
-        for (uint32_t i = 0; i < theta; ++i) {
-            const uint32_t t = (fk.offset + i) % S;
-            if (!key->columnPermutations.count(t)) {
-                std::vector<uint32_t> perm(N);
-                PrecomputeAutoMap(N, FindAutomorphismIndex2nComplex(-static_cast<int32_t>(t), m), &perm);
-                key->columnPermutations.emplace(t, std::move(perm));
-            }
+        for (uint32_t i = 0; i < theta; ++i)
             for (size_t band = 0; band < 4; ++band) {
                 const auto& values = (i == r0) ? RotateRight(masks[band], (fk.offset + r0) % S) : zero;
-                fk.column[i][band] = EncryptScaledByP(cc, secretQP, values, S, key->leafExtraBits);
+                const uint64_t id  = kColumnId | (uint64_t(k) << 24) | (uint64_t(i) << 8) | band;
+                fk.column[i][band] = EncryptScaledByP(cc, secretQP, values, S, key->leafExtraBits, key->seed, id);
             }
-        }
         uint64_t step = theta;
         for (uint32_t t = 0; t < digits; ++t) {
             const uint32_t digit = static_cast<uint32_t>(r1 % sp.muxBase);
@@ -817,29 +1230,45 @@ std::shared_ptr<SHIPBootstrapKey> SHIPKeyGen(const PrivateKey<DCRTPoly>& private
             std::vector<SHIPMuxKey> branches;
             for (uint32_t d = 0; d < sp.muxBase; ++d) {
                 const int32_t rotation = -static_cast<int32_t>((step * d) % S);  // right rotation
-                branches.push_back(MakeMuxKey(cc, privateKey, d == digit ? 1 : 0, rotation));
+                const uint64_t id      = kMuxId | (uint64_t(k) << 32) | (uint64_t(t) << 24) | (uint64_t(d) << 16);
+                branches.push_back(MakeMuxKey(cc, secret, paramsQP, d == digit ? 1 : 0, rotation, key->seed, id));
             }
             fk.mux.push_back(std::move(branches));
             step *= sp.muxBase;
         }
+        if (factorDirectory.empty()) {
+            key->factors[k] = std::move(fk);
+        }
+        else {
+            std::ofstream file(FactorPath(factorDirectory, k), std::ios::binary | std::ios::trunc);
+            if (!file)
+                OPENFHE_THROW("SHIPKeyGen: cannot write " + FactorPath(factorDirectory, k));
+            OutArchive ar(file);
+            const bool compact = false;  // streamed at every bootstrap: store both components
+            ar(compact);
+            SaveFactor(ar, fk, compact);
+        }
     }
 
-    // Conjugation (Algorithm 1, Step 22) and the S2C plan at the two lowest moduli.
-    const uint32_t conjugationIndex = m - 1;
-    cc->EvalAutomorphismKeyGen(privateKey, {conjugationIndex});
-    key->conjugation = std::make_shared<std::map<uint32_t, EvalKey<DCRTPoly>>>();
-    key->conjugation->emplace(conjugationIndex,
-                              cc->GetEvalAutomorphismKeyMap(privateKey->GetKeyTag()).at(conjugationIndex));
-    key->packing = MakePackingPlan(cc, privateKey, sizeQ - 2);
+    // Conjugation (Algorithm 1, Step 22) at the product-tree output level, and S2C at the two lowest moduli.
+    const uint32_t m = 2 * N;
+    key->conjugation = MakeAutomorphismKey(cc, secret, paramsQP, m - 1, 0, sizeQ - treeDepth, key->seed, kConjId);
+    key->packing.babyStep   = BabyStep(S);
+    key->packing.inputLevel = sizeQ - 2;
+    for (int32_t r : PackingRotations(S)) {
+        const uint64_t id = kRotationId | (uint64_t(r) << 8);
+        key->packing.rotations.emplace(
+            r, MakeAutomorphismKey(cc, secret, paramsQP, FindAutomorphismIndex2nComplex(r, m), r, 2, key->seed, id));
+    }
+    key->packing.diagonals = PackingDiagonals(cc, key->packing.inputLevel, sp.messageBound);
     return key;
 }
 
 Ciphertext<DCRTPoly> SHIPBootstrap(ConstCiphertext<DCRTPoly>& ciphertext, const SHIPBootstrapKey& key) {
     if (!ciphertext)
         OPENFHE_THROW("SHIPBootstrap: null ciphertext");
-    const CC cc       = ciphertext->GetCryptoContext();
-    const auto params = CkksParams(cc);
-    const uint32_t S  = key.slots;
+    const CC cc      = ciphertext->GetCryptoContext();
+    const uint32_t S = key.slots;
     if (cc->GetRingDimension() != key.ringDim || ciphertext->GetKeyTag() != key.denseTag)
         OPENFHE_THROW("SHIPBootstrap: ciphertext does not match the bootstrapping key");
     if (ciphertext->GetElements().size() != 2 || ciphertext->GetNoiseScaleDeg() != 1 ||
@@ -852,11 +1281,11 @@ Ciphertext<DCRTPoly> SHIPBootstrap(ConstCiphertext<DCRTPoly>& ciphertext, const 
     auto ct = ciphertext->Clone();
     if (towers > 2)
         cc->LevelReduceInPlace(ct, nullptr, towers - 2);
-    auto coefficients = ApplyPacking(cc, ct, key.packing, S);  // S2C: one level, now at q0
-    auto sparse       = Encapsulate(coefficients, key);
-    const double q0   = sparse->GetElements()[0].GetElementAtIndex(0).GetModulus().ConvertToDouble();
+    auto coefficients  = ApplyPacking(cc, ct, key.packing, S);  // S2C: one level, now at q0
+    auto sparse        = Encapsulate(coefficients, key);
+    const double q0    = sparse->GetElements()[0].GetElementAtIndex(0).GetModulus().ConvertToDouble();
     const double gamma = q0 / sparse->GetScalingFactor();
-    auto real = HalfBootstrap(cc, sparse, key, gamma);
+    auto real          = HalfBootstrap(cc, sparse, key, gamma);
     if (key.params.realOnly)
         return real;
     auto imaginary = HalfBootstrap(cc, MultiplyByHalfMonomial(sparse, true), key, gamma);
@@ -867,24 +1296,99 @@ uint64_t SHIPKeyStoredBytes(const SHIPBootstrapKey& key) {
     auto polyBytes = [](const DCRTPoly& p) {
         return uint64_t(p.GetRingDimension()) * p.GetNumOfElements() * sizeof(NativeInteger);
     };
+    auto switchBytes = [&](const SHIPSwitchKey& k) {
+        uint64_t t = 0;
+        for (const auto& p : k.b)
+            t += polyBytes(p);
+        for (const auto& p : k.a)
+            t += polyBytes(p);
+        return t;
+    };
     uint64_t total = 0;
     for (const auto& f : key.factors) {
         for (const auto& bands : f.column)
-            for (const auto& pair : bands)
-                total += polyBytes(pair[0]) + polyBytes(pair[1]);
+            for (const auto& c : bands)
+                total += polyBytes(c.b) + polyBytes(c.a);
         for (const auto& step : f.mux)
             for (const auto& mk : step)
-                for (const auto& ek : {mk.body, mk.mask}) {
-                    for (const auto& p : ek->GetAVector())
-                        total += polyBytes(p);
-                    for (const auto& p : ek->GetBVector())
-                        total += polyBytes(p);
-                }
+                total += switchBytes(mk.body) + switchBytes(mk.mask);
     }
+    for (const auto& [r, rk] : key.packing.rotations)
+        total += switchBytes(rk.key);
+    total += switchBytes(key.conjugation.key);
     for (const auto& pt : key.packing.diagonals)
         total += polyBytes(pt->GetElement<DCRTPoly>());
     total += 4 * uint64_t(key.ringDim) * sizeof(NativeInteger);
     return total;
+}
+
+void SHIPSerializeBootstrapKey(std::ostream& os, const SHIPBootstrapKey& key, bool compact) {
+    OutArchive ar(os);
+    const std::string magic = "OpenFHE-SHIP";
+    ar(magic, kFormatVersion, compact);
+    const auto& p = key.params;
+    ar(p.hammingWeight, p.window, p.columnSize, p.muxBase, p.encapsulationModBits, p.realOnly, p.messageBound);
+    ar(key.denseTag, key.sparseTag, key.ringDim, key.slots, key.treeDepth, key.leafExtraBits, key.seed);
+    const auto& enc      = key.encapsulation;
+    const uint64_t prime = enc.paramsP->GetModulus().ConvertToInt<uint64_t>();
+    const uint64_t root  = enc.paramsP->GetRootOfUnity().ConvertToInt<uint64_t>();
+    ar(prime, root);
+    ar(enc.bQ0, enc.aQ0, enc.bP, enc.aP);
+    ar(key.packing.babyStep, key.packing.inputLevel, static_cast<uint32_t>(key.packing.rotations.size()));
+    for (const auto& [r, rk] : key.packing.rotations)
+        SaveRotationKey(ar, rk, compact);
+    SaveRotationKey(ar, key.conjugation, compact);
+    ar(key.numFactors);
+    for (uint32_t f = 0; f < key.numFactors; ++f) {
+        if (key.factorDirectory.empty())
+            SaveFactor(ar, key.factors[f], compact);
+        else
+            SaveFactor(ar, *GetFactor(key.context, key, f), compact);
+    }
+}
+
+std::shared_ptr<SHIPBootstrapKey> SHIPDeserializeBootstrapKey(std::istream& is, const CryptoContext<DCRTPoly>& cc) {
+    InArchive ar(is);
+    std::string magic;
+    uint32_t version = 0;
+    bool compact     = false;
+    ar(magic, version, compact);
+    if (magic != "OpenFHE-SHIP" || version != kFormatVersion)
+        OPENFHE_THROW("SHIPDeserializeBootstrapKey: not a SHIP key or unsupported version");
+    auto key     = std::make_shared<SHIPBootstrapKey>();
+    key->context = cc;
+    auto& p      = key->params;
+    ar(p.hammingWeight, p.window, p.columnSize, p.muxBase, p.encapsulationModBits, p.realOnly, p.messageBound);
+    ar(key->denseTag, key->sparseTag, key->ringDim, key->slots, key->treeDepth, key->leafExtraBits, key->seed);
+    if (key->ringDim != cc->GetRingDimension())
+        OPENFHE_THROW("SHIPDeserializeBootstrapKey: ring dimension does not match the context");
+    const auto params = CkksParams(cc);
+    auto& enc         = key->encapsulation;
+    uint64_t pPrime = 0, root = 0;
+    ar(pPrime, root);
+    enc.paramsQ0 = params->GetElementParams()->GetParams()[0];
+    enc.paramsP  = std::make_shared<ILNativeParams>(2 * key->ringDim, NativeInteger(pPrime), NativeInteger(root));
+    ar(enc.bQ0, enc.aQ0, enc.bP, enc.aP);
+    enc.pInvModQ0 = NativeInteger(pPrime).Mod(enc.paramsQ0->GetModulus()).ModInverse(enc.paramsQ0->GetModulus());
+    uint32_t rotations = 0;
+    ar(key->packing.babyStep, key->packing.inputLevel, rotations);
+    for (uint32_t i = 0; i < rotations; ++i) {
+        auto rk = LoadRotationKey(ar, compact, cc, key->seed);
+        key->packing.rotations.emplace(rk.rotation, std::move(rk));
+    }
+    key->conjugation = LoadRotationKey(ar, compact, cc, key->seed);
+    ar(key->numFactors);
+    key->factors.resize(key->numFactors);
+    for (uint32_t f = 0; f < key->numFactors; ++f) {
+        key->factors[f] = LoadFactor(ar, compact, cc, key->seed);
+        ComputeColumnPermutations(*key, key->factors[f].offset, key->factors[f].column.size());
+    }
+    key->packing.diagonals = PackingDiagonals(cc, key->packing.inputLevel, p.messageBound);
+    return key;
+}
+
+const std::string& SHIPKeyTag(const SHIPBootstrapKey& key) {
+    return key.denseTag;
 }
 
 void SHIPInsertBootstrapKey(const std::string& keyTag, std::shared_ptr<SHIPBootstrapKey> key) {
