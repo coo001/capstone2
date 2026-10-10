@@ -203,7 +203,7 @@ HT15는 논문보다 정밀도가 약간 높았다. HT14는 LL13과 같은 이�
 | compact 직렬화 크기 (toy 파라미터) | 49.4 MB, 전체 저장 98.7 MB의 0.500배 |
 | 디스크 기반 키 (toy) | 메모리 12 MB (메모리 모드 107 MB), 결과 오차 동일 |
 | `messageBound` (입력 `[-64, 64]`) | K = 1: 최대 오차 1.62 (사인 근사 실패) / K = 64: 4×10⁻⁴ |
-| gtest | `UTCKKSRNS_SHIP.*` 9개 통과 |
+| OpenFHE 전체 단위 테스트 (`WITH_REDUCED_NOISE=ON`, 변경 후 재실행) | core 156개, binfhe 78개, pke 1,885개(SHIP 9개 포함) 모두 통과 |
 
 ### 복호화 결과 공개 시 noise flooding
 
