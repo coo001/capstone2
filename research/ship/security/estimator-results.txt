@@ -1,0 +1,86 @@
+# lattice-estimator results for SHIP (h = 31 sparse key, dense uniform ternary keys)
+# lattice-estimator commit d8c00b483f70b6298690386b1a3278b5167a2e42 (2026-08-19), SageMath 10.5,
+# mybinder.org image of malb/lattice-estimator, run 2026-10-11 (KST).
+# Xe = DiscreteGaussian(3.19), m = oo unless stated. Sparse key = SparseTernary(16, 15, n).
+# Values are log2 of the attack cost (rop). "inf" = the attack does not apply at this size.
+# bdd_mitm_hybrid / primal_hybrid_mitm = LWE.primal_hybrid(mitm=True, babai=True), the attack LWE.estimate() reports as bdd_mitm_hybrid.
+# dual_mitm_hybrid rows failed because this estimator version has no mitm_optimization keyword (ignored).
+
+## 1. Dense keys (usvp, dual_hybrid)
+REF HE-std N=8192 logQ=218 | usvp | 126.0 | 0s
+REF HE-std N=8192 logQ=218 | dual_hybrid | 126.5 | 15s
+LL13 dense N=8192 logQP=218 | usvp | 126.0 | 0s
+LL13 dense N=8192 logQP=218 | dual_hybrid | 126.5 | 12s
+LL13 sparse N=8192 log(q0p')=55 | usvp | inf | 0s
+LL13 sparse N=8192 log(q0p')=55 | dual_hybrid | inf | 0s
+REF HE-std N=16384 logQ=438 | usvp | 125.9 | 0s
+REF HE-std N=16384 logQ=438 | dual_hybrid | 126.6 | 11s
+LL14 dense logQP=437 | usvp | 126.2 | 0s
+LL14 dense logQP=437 | dual_hybrid | 126.9 | 15s
+HT14 dense logQP=434 | usvp | 127.3 | 0s
+HT14 dense logQP=434 | dual_hybrid | 128.1 | 13s
+LL14 sparse log(q0p')=100 | usvp | inf | 0s
+LL14 sparse log(q0p')=100 | dual_hybrid | inf | 0s
+HT14 sparse log(q0p')=88 | usvp | inf | 0s
+HT14 sparse log(q0p')=88 | dual_hybrid | inf | 0s
+REF HE-std N=32768 logQ=881 | usvp | 126.1 | 0s
+REF HE-std N=32768 logQ=881 | dual_hybrid | 126.9 | 14s
+HT15 dense logQP=827 | usvp | 134.7 | 0s
+HT15 dense logQP=827 | dual_hybrid | 135.7 | 9s
+HT15 sparse log(q0p')=105 | usvp | inf | 0s
+HT15 sparse log(q0p')=105 | dual_hybrid | inf | 0s
+DONE
+
+## 2. Sparse key sweep (h = 31)
+sparse h=31 N=8192 logq=55 | usvp | inf | 0s
+sparse h=31 N=8192 logq=55 | dual_hybrid | inf | 0s
+sparse h=31 N=8192 logq=55 | dual_mitm_hybrid | err:TypeError:MATZOV.__call__() got an unexpected keyword argument 'mitm_o | 0s
+sparse h=31 N=8192 logq=55 | primal_hybrid_mitm | 121.4 | 146s
+sparse h=31 N=8192 logq=80 | usvp | 366.4 | 0s
+sparse h=31 N=8192 logq=80 | dual_hybrid | 355.5 | 26s
+sparse h=31 N=8192 logq=80 | dual_mitm_hybrid | err:TypeError:MATZOV.__call__() got an unexpected keyword argument 'mitm_o | 0s
+sparse h=31 N=8192 logq=80 | primal_hybrid_mitm | 109.6 | 67s
+sparse h=31 N=8192 logq=110 | usvp | 258.5 | 0s
+sparse h=31 N=8192 logq=110 | dual_hybrid | 253.3 | 18s
+sparse h=31 N=8192 logq=110 | dual_mitm_hybrid | err:TypeError:MATZOV.__call__() got an unexpected keyword argument 'mitm_o | 0s
+sparse h=31 N=8192 logq=110 | primal_hybrid_mitm | 99.6 | 73s
+sparse h=31 N=8192 logq=150 | usvp | 184.0 | 0s
+sparse h=31 N=8192 logq=150 | dual_hybrid | 182.2 | 13s
+sparse h=31 N=8192 logq=150 | dual_mitm_hybrid | err:TypeError:MATZOV.__call__() got an unexpected keyword argument 'mitm_o | 0s
+sparse h=31 N=8192 logq=150 | primal_hybrid_mitm | 89.8 | 73s
+sparse h=31 N=8192 logq=218 | usvp | 123.5 | 0s
+sparse h=31 N=8192 logq=218 | dual_hybrid | 123.5 | 8s
+sparse h=31 N=8192 logq=218 | dual_mitm_hybrid | err:TypeError:MATZOV.__call__() got an unexpected keyword argument 'mitm_o | 0s
+sparse h=31 N=8192 logq=218 | primal_hybrid_mitm | 78.1 | 69s
+sparse h=31 N=16384 logq=100 | usvp | inf | 0s
+sparse h=31 N=16384 logq=100 | dual_hybrid | inf | 0s
+sparse h=31 N=16384 logq=100 | dual_mitm_hybrid | err:TypeError:MATZOV.__call__() got an unexpected keyword argument 'mitm_o | 0s
+sparse h=31 N=16384 logq=100 | primal_hybrid_mitm | 126.2 | 222s
+sparse h=31 N=16384 logq=160 | usvp | 379.0 | 0s
+sparse h=31 N=16384 logq=160 | dual_hybrid | 372.6 | 23s
+sparse h=31 N=16384 logq=160 | dual_mitm_hybrid | err:TypeError:MATZOV.__call__() got an unexpected keyword argument 'mitm_o | 0s
+sparse h=31 N=16384 logq=160 | primal_hybrid_mitm | 111.6 | 121s
+sparse h=31 N=32768 logq=105 | usvp | inf | 0s
+sparse h=31 N=32768 logq=105 | dual_hybrid | inf | 0s
+sparse h=31 N=32768 logq=105 | dual_mitm_hybrid | err:TypeError:MATZOV.__call__() got an unexpected keyword argument 'mitm_o | 0s
+sparse h=31 N=32768 logq=105 | primal_hybrid_mitm | 148.7 | 278s
+DONE
+
+## 3. Sparse key, limited samples m = n (stopped after LL13: identical to m = oo)
+LL13 sparse h=31 N=8192 log(q0p')=55 m=n | primal_hybrid_mitm | 121.4 | 128s
+LL13 sparse h=31 N=8192 log(q0p')=55 m=inf | primal_hybrid_mitm | 121.4 | 6s
+
+## 4. Bounds adopted by the library (42, 88, 105) and intermediate values
+HT14 sparse h=31 N=16384 log(q0p')=88 | usvp | inf | 0s
+HT14 sparse h=31 N=16384 log(q0p')=88 | dual_hybrid | inf | 0s
+HT14 sparse h=31 N=16384 log(q0p')=88 | bdd_mitm_hybrid | 130.2 | 231s
+LL14 p'=44 sparse h=31 N=16384 log(q0p')=92 | usvp | inf | 0s
+LL14 p'=44 sparse h=31 N=16384 log(q0p')=92 | dual_hybrid | inf | 0s
+LL14 p'=44 sparse h=31 N=16384 log(q0p')=92 | bdd_mitm_hybrid | 128.9 | 225s
+LL13 p'=20 sparse h=31 N=8192 log(q0p')=45 | usvp | inf | 0s
+LL13 p'=20 sparse h=31 N=8192 log(q0p')=45 | dual_hybrid | inf | 0s
+LL13 p'=20 sparse h=31 N=8192 log(q0p')=45 | bdd_mitm_hybrid | 127.6 | 133s
+LL13 min sparse h=31 N=8192 log(q0p')=42 | usvp | inf | 0s
+LL13 min sparse h=31 N=8192 log(q0p')=42 | dual_hybrid | inf | 0s
+LL13 min sparse h=31 N=8192 log(q0p')=42 | bdd_mitm_hybrid | 129.8 | 119s
+DONE
