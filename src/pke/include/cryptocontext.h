@@ -3614,14 +3614,17 @@ public:
     /**
     * @brief Generates the SHIP bootstrapping key (Cheon, Hanrot, Kim, Stehle, EUROCRYPT 2025) for a secret key.
     * Requires CKKS with FIXEDMANUAL scaling, HYBRID key switching and full packing (see GenSHIPCryptoContext).
-    * EvalMultKeyGen must have been called for the key. Also inserts the S2C rotation and conjugation keys.
+    * EvalMultKeyGen must have been called for the key.
     *
-    * @param privateKey  Secret key.
-    * @param params      SHIP parameters (Hamming weight, window, column size, mux base, ...).
+    * @param privateKey       Secret key.
+    * @param params           SHIP parameters (see SHIPParams::Recommended).
+    * @param factorDirectory  If not empty, the per-coefficient keys are kept on disk in this directory
+    *                         (for parameter sets that do not fit in memory).
     */
-    void EvalSHIPBootstrapKeyGen(const PrivateKey<Element> privateKey, const SHIPParams& params = SHIPParams()) {
+    void EvalSHIPBootstrapKeyGen(const PrivateKey<Element> privateKey, const SHIPParams& params = SHIPParams(),
+                                 const std::string& factorDirectory = "") {
         ValidateKey(privateKey);
-        SHIPInsertBootstrapKey(privateKey->GetKeyTag(), SHIPKeyGen(privateKey, params));
+        SHIPInsertBootstrapKey(privateKey->GetKeyTag(), SHIPKeyGen(privateKey, params, factorDirectory));
     }
 
     /**
@@ -3634,6 +3637,22 @@ public:
     Ciphertext<Element> EvalSHIPBootstrap(ConstCiphertext<Element>& ciphertext) const {
         ValidateCiphertext(ciphertext);
         return SHIPBootstrap(ciphertext, *SHIPGetBootstrapKey(ciphertext->GetKeyTag()));
+    }
+
+    /**
+    * @brief Writes the SHIP bootstrapping key of a key tag. compact = true stores the seed of the uniform
+    * key components instead of the components themselves (about half the size).
+    */
+    static void SerializeEvalSHIPBootstrapKey(std::ostream& os, const std::string& keyTag, bool compact = true) {
+        SHIPSerializeBootstrapKey(os, *SHIPGetBootstrapKey(keyTag), compact);
+    }
+
+    /**
+    * @brief Reads a SHIP bootstrapping key for this context and registers it under its key tag.
+    */
+    void DeserializeEvalSHIPBootstrapKey(std::istream& is) {
+        auto key = SHIPDeserializeBootstrapKey(is, GetContextForPointer(this));
+        SHIPInsertBootstrapKey(SHIPKeyTag(*key), key);
     }
 
     /// Removes all SHIP bootstrapping keys.
