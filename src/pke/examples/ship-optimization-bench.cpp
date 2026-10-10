@@ -35,7 +35,8 @@ static uint64_t StoredBytes(const CC& cc, const FullBootstrapKey& k, const std::
     for (const auto& digit : k.encapsulation.digits)
         for (const auto& p : digit) total += uint64_t(p.GetLength())*sizeof(NativeInteger);
     for (const auto& f : k.half.factors) {
-        for (const auto& ct : f.selectors) for (const auto& p : ct->GetElements()) total += PolyBytes(p);
+        for (const auto& ct : f.selectors) if (ct) for (const auto& p : ct->GetElements()) total += PolyBytes(p);
+        if (k.half.auxMasking) for (const auto& pair : f.auxSelectors) for (const auto& p : pair) total += PolyBytes(p);
         for (const auto& pair : f.rotation) for (const auto& key : pair) { addEval(key.body); addEval(key.mask); }
         for (const auto& pair : f.fusedRotation) for (const auto& key : pair) { addEval(key.body); addEval(key.mask); }
     }
