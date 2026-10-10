@@ -1,0 +1,31 @@
+set=LL14 N=16384 slots=8192 log2QP=437 HEStd_128_classic_max_log2QP=438 dnum=4
+Q_bits=48 37 37 48 42 43 42 42  P_bits=50 50 
+h=31 w=264 theta=9 B=4 log2(q0*p')<=88 (estimator bound 88) May21_window_cost_log2=124.55 (>=115 required)
+estimated_ship_key_GiB=12.1782 factor_dir=(memory)
+context_s=0.0724855 keygen_s=72.3282 ship_key_in_memory_GiB=12.1787
+openmp=on max_threads=4
+threads=4
+trial=0 latency_s=5.521 max_real_error=1.74424e-05 precision_bits=15.807 output_limbs=3 mult_levels_after=1
+noise_flooding: estimate_log2=4.91215 flooding_std_log2=21.7046 scale_log2=37 max_real_error=0.00836958 precision_bits=6.90063
+square_then_bootstrap max_real_error=3.08911e-05 precision_bits=14.9824
+trial=1 latency_s=4.77583 max_real_error=1.21227e-05 precision_bits=16.3319 output_limbs=3 mult_levels_after=1
+trial=2 latency_s=5.17745 max_real_error=1.28985e-05 precision_bits=16.2424 output_limbs=3 mult_levels_after=1
+summary set=LL14 trials=3 median_latency_s=5.17745 worst_precision_bits=15.807
+       93.64 real       151.04 user         5.78 sys
+         14630338560  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              893379  page reclaims
+                  10  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              317620  involuntary context switches
+       1019220989481  instructions retired
+        298327712495  cycles elapsed
+         14633855536  peak memory footprint
