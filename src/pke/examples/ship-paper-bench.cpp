@@ -25,20 +25,15 @@ int main(int argc, char** argv) {
         const std::string set = argc > 1 ? argv[1] : "LL13";
         const uint32_t trials = argc > 2 ? std::stoul(argv[2]) : 5;
         SHIPContextSpec spec;
-        SHIPParams sp;  // paper defaults: h = 31, w = 175, theta, B = 4, real numbers
-        uint32_t sparseBound = 0;  // log2(q0 p') with 128-bit security for h = 31 (paper Section 5.2)
-        if (set == "LL13") {
-            spec                    = SHIPContextSpec::LL13();
-            sp.columnSize           = 6;
-            sp.encapsulationModBits = 30;
-            sparseBound             = 55;
-        }
-        else if (set == "LL14") {
-            spec                    = SHIPContextSpec::LL14();
-            sp.columnSize           = 9;
-            sp.window               = 264;  // w = max(175, N / (2h)) (paper Section 5.1)
-            sp.encapsulationModBits = 52;
-            sparseBound             = 100;
+        SHIPParams sp;
+        uint32_t sparseBound = 0;  // log2(q0 p') with 128-bit security for h = 31 (lattice estimator, research/ship/security)
+        if (set == "LL13" || set == "LL14" || set == "HT14" || set == "HT15") {
+            spec        = set == "LL13" ? SHIPContextSpec::LL13() :
+                          set == "LL14" ? SHIPContextSpec::LL14() :
+                          set == "HT14" ? SHIPContextSpec::HT14() :
+                                          SHIPContextSpec::HT15();
+            sp          = SHIPParams::Recommended(spec);
+            sparseBound = spec.ringDim == (1 << 13) ? 42 : spec.ringDim == (1 << 14) ? 88 : 105;
         }
         else if (set == "custom") {
             // custom trials N q0 scale aux dnum h w theta pbits [boot]  (HEStd_NotSet: diagnostics only)
@@ -59,8 +54,10 @@ int main(int argc, char** argv) {
             sparseBound             = 1000;
         }
         else {
-            throw std::invalid_argument("usage: ship-paper-bench [LL13|LL14|custom] [trials] ...");
+            throw std::invalid_argument("usage: ship-paper-bench [LL13|LL14|HT14|HT15|custom] [trials] ...");
         }
+        // SHIP_FACTOR_DIR: keep the per-coefficient keys on disk (needed for HT14/HT15 on 48 GB machines).
+        const std::string factorDir = std::getenv("SHIP_FACTOR_DIR") ? std::getenv("SHIP_FACTOR_DIR") : "";
         auto start = Clock::now();
         auto cc    = GenSHIPCryptoContext(spec);  // throws unless log2(QP) meets HEStd_128_classic
         const double contextSeconds = Seconds(start);
@@ -78,22 +75,31 @@ int main(int argc, char** argv) {
             std::cout << p->GetModulus().GetMSB() << ' ';
         std::cout << std::endl;
         const uint32_t q0Bits = params->GetElementParams()->GetParams()[0]->GetModulus().GetMSB();
+        // SHIP_ENCAPS_BITS: size of p' (for a smaller log2(q0 p') than the published bound).
+        if (const char* env = std::getenv("SHIP_ENCAPS_BITS"))
+            sp.encapsulationModBits = std::stoul(env);
+        if (sp.encapsulationModBits == 0)
+            sp.encapsulationModBits = std::min<uint32_t>(60, sparseBound - q0Bits);  // what SHIPKeyGen chooses
         const double windowLog = 0.4 * sp.hammingWeight * std::log2(4.0 * sp.window);
         std::cout << "h=" << sp.hammingWeight << " w=" << sp.window << " theta=" << sp.columnSize
                   << " B=" << sp.muxBase << " log2(q0*p')<=" << q0Bits + sp.encapsulationModBits
-                  << " (paper estimator bound " << sparseBound << ")"
+                  << " (estimator bound " << sparseBound << ")"
                   << " May21_window_cost_log2=" << windowLog << " (>=115 required)" << std::endl;
         if (set != "custom" && (q0Bits + sp.encapsulationModBits > sparseBound || windowLog < 115))
             throw std::runtime_error("sparse-secret parameters exceed the paper's 128-bit bounds");
 
         auto kp = cc->KeyGen();
         cc->EvalMultKeyGen(kp.secretKey);
+        std::cout << "estimated_ship_key_GiB=" << SHIPEstimateKeyBytes(cc, sp) / 1073741824.0
+                  << " factor_dir=" << (factorDir.empty() ? "(memory)" : factorDir) << std::endl;
+        if (trials == 0)
+            return 0;
         start = Clock::now();
-        cc->EvalSHIPBootstrapKeyGen(kp.secretKey, sp);
+        cc->EvalSHIPBootstrapKeyGen(kp.secretKey, sp, factorDir);
         const double keygenSeconds = Seconds(start);
         const auto key            = SHIPGetBootstrapKey(kp.secretKey->GetKeyTag());
         std::cout << "context_s=" << contextSeconds << " keygen_s=" << keygenSeconds
-                  << " ship_key_payload_GiB=" << SHIPKeyStoredBytes(*key) / 1073741824.0 << std::endl;
+                  << " ship_key_in_memory_GiB=" << SHIPKeyStoredBytes(*key) / 1073741824.0 << std::endl;
 
         const uint32_t sizeQ = params->GetElementParams()->GetParams().size();
         std::vector<double> latencies;
@@ -166,6 +172,42 @@ int main(int argc, char** argv) {
                       << " precision_bits=" << -std::log2(eps) << " output_limbs=" << limbs
                       << " mult_levels_after=" << limbs - 2 << std::endl;
             if (t == 0 && set != "custom" && threads == threadList.front()) {
+                // IND-CPA^D decryption with noise flooding, emulated exactly as OpenFHE's NOISE_FLOODING_DECRYPT:
+                // noise estimate from the imaginary parts (EXEC_NOISE_ESTIMATION), then Gaussian noise of
+                // standard deviation 2^(stat/2 + log2(sqrt(12 q)) + estimate) added to the decryption (here to c0).
+                double sumSq = 0;
+                for (uint32_t i = 0; i < S; ++i)
+                    sumSq += std::pow(pt->GetCKKSPackedValue()[i].imag(), 2);
+                const double sigmaSlot  = std::sqrt(sumSq / S);
+                const double delta      = std::pow(2.0, params->GetPlaintextModulus());
+                const double estimate   = std::log2(sigmaSlot * delta / std::sqrt(N / 2.0));
+                const double statSec    = 30, queries = 1;  // OpenFHE defaults
+                const double logStd     = statSec / 2 + std::log2(std::sqrt(12 * queries));
+                DiscreteGaussianGeneratorImpl<NativeVector> flood(std::pow(2.0, logStd + estimate));
+                auto flooded  = out->Clone();
+                auto elements = flooded->GetElements();
+                // The flooding samples can exceed the small SHIP primes: reduce them modulo every prime explicitly.
+                auto samples = flood.GenerateIntVector(N);
+                DCRTPoly noise(elements[0].GetParams(), Format::COEFFICIENT, true);
+                for (size_t k = 0; k < noise.GetNumOfElements(); ++k) {
+                    auto limb        = noise.GetElementAtIndex(k);
+                    const int64_t q  = static_cast<int64_t>(limb.GetModulus().ConvertToInt<uint64_t>());
+                    for (uint32_t i = 0; i < N; ++i)
+                        limb[i] = NativeInteger(static_cast<uint64_t>(((samples.get()[i] % q) + q) % q));
+                    noise.SetElementAtIndex(k, std::move(limb));
+                }
+                noise.SetFormat(Format::EVALUATION);
+                elements[0] += noise;
+                flooded->SetElements(std::move(elements));
+                Plaintext pf;
+                cc->Decrypt(kp.secretKey, flooded, &pf);
+                pf->SetLength(S);
+                double ef = 0;
+                for (uint32_t i = 0; i < S; ++i)
+                    ef = std::max(ef, std::abs(pf->GetCKKSPackedValue()[i].real() - x[i]));
+                std::cout << "noise_flooding: estimate_log2=" << estimate << " flooding_std_log2=" << logStd + estimate
+                          << " scale_log2=" << std::log2(delta) << " max_real_error=" << ef
+                          << " precision_bits=" << -std::log2(ef) << std::endl;
                 // The restored level must be usable: one multiplication, then bootstrap again.
                 auto sq = cc->EvalMult(out, out);
                 cc->RescaleInPlace(sq);
