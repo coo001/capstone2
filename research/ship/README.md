@@ -2,7 +2,9 @@
 
 **2026-10-11 현재 SHIP은 OpenFHE 라이브러리 기능이다.** `cc->EvalSHIPBootstrapKeyGen`, `cc->EvalSHIPBootstrap`으로 호출하며
 구현은 `src/pke/lib/scheme/ckksrns/ckksrns-ship.cpp`에 있다. 논문의 블라인드 회전(column+mux, base-4), 균등 간격 sparse 키,
-`P·q0` encapsulation, 대각선 S2C, Table 2의 역할별 소수를 구현했고 128비트 LL13·LL14 대응 파라미터로 검증했다.
+`P·q0` encapsulation, 대각선 S2C, Table 2의 역할별 소수를 구현했고 논문의 네 파라미터 세트(LL13, LL14, HT14, HT15)를 128비트 HE 표준 안에서 실행했다.
+키 직렬화(시드 저장으로 크기 1/2), 디스크 기반 키, 입력 범위 지정(`messageBound`)을 지원한다.
+lattice estimator 직접 실행 결과 논문의 sparse 키 경계값 두 개(2^13·55비트, 2^14·100비트)가 128비트에 못 미쳐, 기본값을 estimator 기준(42, 88, 105)으로 바꿨다.
 설계·보안 검증·결과는 [LIBRARY.md](LIBRARY.md), 원논문 대조는 [PAPER-COMPARISON.md](PAPER-COMPARISON.md)에 있다.
 
 아래는 그 이전 단계의 연구 프로토타입(`src/pke/examples/ship/*.h`, `ship::FullBootstrap`) 기록이다.
