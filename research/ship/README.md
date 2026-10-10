@@ -1,21 +1,29 @@
-# SHIP → OpenFHE 연구 재개 기록
+# SHIP → OpenFHE 연구 기록
 
-현재 단계는 **일반 CKKS 슬롯 암호문을 복원하는 전체 경로의 정확성 참조 구현**이다.
-이전의 half-bootstrap에서 dense→sparse 키 전환과 양쪽 계수 복구, 슬롯 변환까지 연결했다.
-논문과 동일한 최적화·보안·성능을 갖춘 SHIP 구현이 완성된 것은 아니다.
-OpenFHE의 표준 `EvalBootstrap`은 그대로 두고 `ship::FullBootstrap`을 별도 연구 코드로 제공한다.
+**2026-10-11 현재 SHIP은 OpenFHE 라이브러리 기능이다.** `cc->EvalSHIPBootstrapKeyGen`, `cc->EvalSHIPBootstrap`으로 호출하며
+구현은 `src/pke/lib/scheme/ckksrns/ckksrns-ship.cpp`에 있다. 논문의 블라인드 회전(column+mux, base-4), 균등 간격 sparse 키,
+`P·q0` encapsulation, 대각선 S2C, Table 2의 역할별 소수를 구현했고 논문의 네 파라미터 세트(LL13, LL14, HT14, HT15)를 128비트 HE 표준 안에서 실행했다.
+키 직렬화(시드 저장으로 크기 1/2), 디스크 기반 키, 입력 범위 지정(`messageBound`)을 지원한다.
+lattice estimator 직접 실행 결과 논문의 sparse 키 경계값 두 개(2^13·55비트, 2^14·100비트)가 128비트에 못 미쳐, 기본값을 estimator 기준(42, 88, 105)으로 바꿨다.
+설계·보안 검증·결과는 [LIBRARY.md](LIBRARY.md), 원논문 대조는 [PAPER-COMPARISON.md](PAPER-COMPARISON.md)에 있다.
 
-현재 기본 경로에는 **회전 결합·분해 재사용·지연 ModDown** 최적화가 적용되어 있다.
+아래는 그 이전 단계의 연구 프로토타입(`src/pke/examples/ship/*.h`, `ship::FullBootstrap`) 기록이다.
+라이브러리 구현과 별도로 비교·기록용으로 남겨 두었다.
+
+이전 프로토타입은 **일반 CKKS 슬롯 암호문을 복원하는 전체 경로의 정확성 참조 구현**이었다.
+half-bootstrap에서 dense→sparse 키 전환과 양쪽 계수 복구, 슬롯 변환까지 연결했다.
+
+프로토타입에는 **회전 결합·분해 재사용·지연 ModDown** 최적화가 적용되어 있다.
 같은 키·입력의 512-slot 실험에서 기존 참조 경로 대비 중앙값 기준 약 2.13배 빨라졌다.
 메모리는 거의 줄지 않았다. 자세한 구성과 측정 한계는 [최적화 기록](OPTIMIZATION.md)에 있다.
 
 2026-10-10에 **마스크 곱셈을 보조 모듈러스 `P`에서 수행하는 경로**를 기본으로 바꿨다(논문 §4.4).
 부트스트래핑 깊이가 1 줄어 `h=31`에서 논문과 같은 6레벨을 쓴다. 자세한 내용은 [AUX-MASKING.md](AUX-MASKING.md)에 있다.
-원논문 전문과의 알고리즘별 대조는 [PAPER-COMPARISON.md](PAPER-COMPARISON.md)에 정리했다.
 
 ## 재현
 
 OpenFHE 의존성이 준비된 저장소에서 실행한다. 새 clone에는 submodule도 받아야 한다.
+스크립트는 `WITH_REDUCED_NOISE=ON`으로 빌드하며 연구 프로토타입 검사, 라이브러리 검사, SHIP gtest를 실행한다.
 
 ```sh
 git submodule update --init --recursive

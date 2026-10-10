@@ -1,0 +1,4 @@
+trial=0 message_error=1.54731e-11 phase_error=1.54731e-11 imaginary_error=1.78116e-14 input_towers=1 output_towers=6 output_level=3 elapsed_ms=57.1639
+trial=1 message_error=7.84376e-07 phase_error=1.81235e-11 imaginary_error=1.66051e-14 input_towers=1 output_towers=6 output_level=3 elapsed_ms=52.339
+trial=2 message_error=7.79669e-07 phase_error=2.19192e-11 imaginary_error=1.91201e-14 input_towers=1 output_towers=6 output_level=3 elapsed_ms=55.1153
+ALL HALF-BOOTSTRAP CHECKS PASSED (toy sparse key; no security or latency claim)

@@ -1,0 +1,12 @@
+N=1024 h=8 depth=9 log2P=240
+trial=0 aux_error=1.85883e-08 rescale_error=1.85585e-07 path_difference=1.87942e-07 aux_towers=5 rescale_towers=4 aux_ms=263.755 rescale_ms=233.989
+trial=1 aux_error=1.14989e-07 rescale_error=2.84827e-07 path_difference=1.86733e-07 aux_towers=5 rescale_towers=4 aux_ms=261.896 rescale_ms=233.549
+trial=2 aux_error=2.01071e-08 rescale_error=1.61711e-07 path_difference=1.64611e-07 aux_towers=5 rescale_towers=4 aux_ms=261.478 rescale_ms=234.651
+trial=3 aux_error=2.45971e-08 rescale_error=1.70332e-07 path_difference=1.66045e-07 aux_towers=5 rescale_towers=4 aux_ms=263.255 rescale_ms=235.399
+square_error=2.69705e-08 second_refresh_error=4.88441e-08
+median_ms aux=263.255 rescale=234.651 (4 single runs; not a benchmark)
+depth=6 h=8 aux_rejected=0 rescale_rejected=1
+depth=6 h=8 aux_error=1.91397e-07 output_towers=2
+depth=7 h=31 aux_rejected=0 rescale_rejected=1
+depth=7 h=31 aux_error=3.85509e-08 levels_consumed=6 output_towers=2 ms=707.929
+ALL AUX-MASKING CHECKS PASSED (toy parameters; security unverified)

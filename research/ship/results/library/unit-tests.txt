@@ -1,0 +1,23 @@
+OpenFHE unit tests, build-ship-rn (WITH_REDUCED_NOISE=ON, OpenMP OFF), 2026-10-11, after the serialization / disk key / HT preset / estimator-bound changes (commit 0b175df)
+--- core_tests
+[==========] Running 156 tests from 17 test suites.
+[==========] 156 tests from 17 test suites ran. (5070 ms total)
+[  PASSED  ] 156 tests.
+--- binfhe_tests
+[==========] Running 78 tests from 10 test suites.
+[==========] 78 tests from 10 test suites ran. (49851 ms total)
+[  PASSED  ] 78 tests.
+--- pke_tests
+[==========] Running 1885 tests from 32 test suites.
+[==========] 1885 tests from 32 test suites ran. (345719 ms total)
+[  PASSED  ] 1885 tests.
+--- SHIP gtest
+[       OK ] UTCKKSRNS_SHIP.RealWindowedColumnAndBase4Mux (1258 ms)
+[       OK ] UTCKKSRNS_SHIP.ComplexUnrestrictedBinaryMux (2468 ms)
+[       OK ] UTCKKSRNS_SHIP.RoleSpecificBootPrimes (1235 ms)
+[       OK ] UTCKKSRNS_SHIP.HigherLevelInputIsLevelReduced (1057 ms)
+[       OK ] UTCKKSRNS_SHIP.RejectsInvalidInputsAndKeys (882 ms)
+[       OK ] UTCKKSRNS_SHIP.CompactSerializationRoundTrip (1689 ms)
+[       OK ] UTCKKSRNS_SHIP.DiskBackedFactorKeys (1452 ms)
+[       OK ] UTCKKSRNS_SHIP.MessageBoundWidensInputRange (972 ms)
+[       OK ] UTCKKSRNS_SHIP.PresetContextsMeetHEStandard (482 ms)

@@ -1,0 +1,2 @@
+standard_bootstrap slots=2048 max_error=1.603e-05 usable_levels_before=1 usable_levels_after=10
+ALL BASELINE CHECKS PASSED (upstream toy parameters)

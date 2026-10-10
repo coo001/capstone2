@@ -1006,6 +1006,67 @@ DCRTPolyImpl<VecType> DCRTPolyImpl<VecType>::ApproxModDown(
     }
     partP.OverrideFormat(Format::COEFFICIENT);
 
+#if defined(WITH_REDUCED_NOISE)
+    if (t == 0) {
+        // Exact rounding: subtract the centered remainder r = [x]_P in (-P/2, P/2] instead of the
+        // approximate basis conversion of [x]_P in [0, P), whose representative is off by alpha*P
+        // (alpha in [0, sizeP)). Flooring leaves a biased error (mean 1/2 times the secret) and the
+        // alpha term adds +-1 per coefficient; both matter at small CKKS scaling factors.
+        // r = sum_j y_j * (P/p_j) - round(sum_j y_j / p_j) * P with y_j = [x * (P/p_j)^{-1}]_{p_j}.
+        const uint32_t ringDim = m_params->GetRingDimension();
+        std::vector<NativeInteger> moduliP(sizeP);
+        std::vector<double> inverseP(sizeP);
+        for (uint32_t j = 0; j < sizeP; ++j) {
+            moduliP[j]  = paramsP->GetParams()[j]->GetModulus();
+            inverseP[j] = 1.0 / moduliP[j].ConvertToDouble();
+            partP.m_vectors[j] *= PHatInvModp[j];
+        }
+        DCRTPolyImpl<VecType> ans(paramsQ, Format::EVALUATION, true);
+        uint32_t diffQ = paramsQ->GetParams().size() - sizeQ;
+        if (diffQ > 0)
+            ans.DropLastElements(diffQ);
+        std::vector<int64_t> alpha(ringDim);
+    #pragma omp parallel for num_threads(OpenFHEParallelControls.GetThreadLimit(8))
+        for (uint32_t k = 0; k < ringDim; ++k) {
+            double sum = 0;
+            for (uint32_t j = 0; j < sizeP; ++j)
+                sum += partP.m_vectors[j][k].ConvertToDouble() * inverseP[j];
+            alpha[k] = std::llround(sum);
+        }
+    #pragma omp parallel for num_threads(OpenFHEParallelControls.GetThreadLimit(sizeQ))
+        for (uint32_t i = 0; i < sizeQ; ++i) {
+            const NativeInteger& qi = m_vectors[i].GetModulus();
+            const NativeInteger PModqi =
+                PHatModq[0][i].ModMul(moduliP[0].Mod(qi), qi);  // [P]_{q_i} = [P/p_0]_{q_i} * p_0
+            PolyType r(m_vectors[i].GetParams(), Format::COEFFICIENT, true);
+            std::vector<NativeInteger> alphaP(sizeP + 1);  // alpha * [P]_{q_i}, alpha in [0, sizeP]
+            for (uint32_t a = 0; a <= sizeP; ++a)
+                alphaP[a] = NativeInteger(a).ModMul(PModqi, qi);
+    #if defined(HAVE_INT128) && (NATIVEINT == 64)
+            const uint64_t q64 = qi.template ConvertToInt<uint64_t>();
+            for (uint32_t k = 0; k < ringDim; ++k) {
+                DoubleNativeInt sum = 0;
+                for (uint32_t j = 0; j < sizeP; ++j)
+                    sum += Mul128(partP.m_vectors[j][k].template ConvertToInt<uint64_t>(),
+                                  PHatModq[j][i].template ConvertToInt<uint64_t>());
+                NativeInteger acc(BarrettUint128ModUint64(sum, q64, modqBarrettMu[i]));
+                r[k] = acc.ModSubFast(alphaP[alpha[k]], qi);
+            }
+    #else
+            for (uint32_t k = 0; k < ringDim; ++k) {
+                NativeInteger acc(0);
+                for (uint32_t j = 0; j < sizeP; ++j)
+                    acc.ModAddFastEq(partP.m_vectors[j][k].Mod(qi).ModMul(PHatModq[j][i], qi), qi);
+                r[k] = acc.ModSub(alphaP[alpha[k]], qi);
+            }
+    #endif
+            r.SetFormat(Format::EVALUATION);
+            ans.m_vectors[i] = (m_vectors[i] - r) * PInvModq[i];
+        }
+        return ans;
+    }
+#endif
+
     auto partPSwitchedToQ =
         partP.ApproxSwitchCRTBasis(paramsP, paramsQ, PHatInvModp, PHatInvModpPrecon, PHatModq, modqBarrettMu);
 

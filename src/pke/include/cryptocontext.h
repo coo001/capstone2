@@ -44,6 +44,7 @@
 #include "key/evalkey.h"
 #include "key/keypair.h"
 #include "scheme/scheme-swch-params.h"
+#include "scheme/ckksrns/ckksrns-ship.h"
 #include "schemebase/base-pke.h"
 #include "schemebase/base-scheme.h"
 #include "schemerns/rns-cryptoparameters.h"
@@ -3608,6 +3609,55 @@ public:
     Ciphertext<Element> EvalBootstrap(ConstCiphertext<Element>& ciphertext, uint32_t numIterations = 1,
                                       uint32_t precision = 0) const {
         return GetScheme()->EvalBootstrap(ciphertext, numIterations, precision);
+    }
+
+    /**
+    * @brief Generates the SHIP bootstrapping key (Cheon, Hanrot, Kim, Stehle, EUROCRYPT 2025) for a secret key.
+    * Requires CKKS with FIXEDMANUAL scaling, HYBRID key switching and full packing (see GenSHIPCryptoContext).
+    * EvalMultKeyGen must have been called for the key.
+    *
+    * @param privateKey       Secret key.
+    * @param params           SHIP parameters (see SHIPParams::Recommended).
+    * @param factorDirectory  If not empty, the per-coefficient keys are kept on disk in this directory
+    *                         (for parameter sets that do not fit in memory).
+    */
+    void EvalSHIPBootstrapKeyGen(const PrivateKey<Element> privateKey, const SHIPParams& params = SHIPParams(),
+                                 const std::string& factorDirectory = "") {
+        ValidateKey(privateKey);
+        SHIPInsertBootstrapKey(privateKey->GetKeyTag(), SHIPKeyGen(privateKey, params, factorDirectory));
+    }
+
+    /**
+    * @brief SHIP bootstrapping. The input must be fully packed and rescaled with at least two RNS limbs.
+    * The output consumed ceil(log2(h+1)) levels from the top of the modulus chain.
+    *
+    * @param ciphertext  Input ciphertext.
+    * @return Refreshed ciphertext.
+    */
+    Ciphertext<Element> EvalSHIPBootstrap(ConstCiphertext<Element>& ciphertext) const {
+        ValidateCiphertext(ciphertext);
+        return SHIPBootstrap(ciphertext, *SHIPGetBootstrapKey(ciphertext->GetKeyTag()));
+    }
+
+    /**
+    * @brief Writes the SHIP bootstrapping key of a key tag. compact = true stores the seed of the uniform
+    * key components instead of the components themselves (about half the size).
+    */
+    static void SerializeEvalSHIPBootstrapKey(std::ostream& os, const std::string& keyTag, bool compact = true) {
+        SHIPSerializeBootstrapKey(os, *SHIPGetBootstrapKey(keyTag), compact);
+    }
+
+    /**
+    * @brief Reads a SHIP bootstrapping key for this context and registers it under its key tag.
+    */
+    void DeserializeEvalSHIPBootstrapKey(std::istream& is) {
+        auto key = SHIPDeserializeBootstrapKey(is, GetContextForPointer(this));
+        SHIPInsertBootstrapKey(SHIPKeyTag(*key), key);
+    }
+
+    /// Removes all SHIP bootstrapping keys.
+    static void ClearEvalSHIPBootstrapKeys() {
+        SHIPClearBootstrapKeys();
     }
 
     template <typename VectorDataType>
