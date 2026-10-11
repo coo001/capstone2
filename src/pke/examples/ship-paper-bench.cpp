@@ -89,11 +89,14 @@ int main(int argc, char** argv) {
         // SHIP_ENCAPS_BITS: size of p' (for a smaller log2(q0 p') than the published bound).
         if (const char* env = std::getenv("SHIP_ENCAPS_BITS"))
             sp.encapsulationModBits = std::stoul(env);
+        // SHIP_ENCAPS_DIGIT_BITS: gadget decomposition of the encapsulation key (small p' without precision loss).
+        if (const char* env = std::getenv("SHIP_ENCAPS_DIGIT_BITS"))
+            sp.encapsulationDigitBits = std::stoul(env);
         if (sp.encapsulationModBits == 0)
             sp.encapsulationModBits = std::min<uint32_t>(60, sparseBound - q0Bits);  // what SHIPKeyGen chooses
         const double windowLog = 0.4 * sp.hammingWeight * std::log2(4.0 * sp.window);
         std::cout << "h=" << sp.hammingWeight << " w=" << sp.window << " theta=" << sp.columnSize
-                  << " B=" << sp.muxBase << " log2(q0*p')<=" << q0Bits + sp.encapsulationModBits
+                  << " B=" << sp.muxBase << " encaps_digit_bits=" << sp.encapsulationDigitBits << " log2(q0*p')<=" << q0Bits + sp.encapsulationModBits
                   << " (estimator bound " << sparseBound << ")"
                   << " May21_window_cost_log2=" << windowLog << " (>=115 required)" << std::endl;
         if (set != "custom" && (q0Bits + sp.encapsulationModBits > sparseBound || windowLog < 115))
