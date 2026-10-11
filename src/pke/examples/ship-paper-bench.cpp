@@ -14,6 +14,17 @@
 #endif
 
 using namespace lbcrypto;
+
+namespace {
+// Counts the bytes written to it (serialized-size measurement without storing the data).
+class CountingBuf : public std::streambuf {
+public:
+    uint64_t count = 0;
+protected:
+    std::streamsize xsputn(const char*, std::streamsize n) override { count += n; return n; }
+    int_type overflow(int_type c) override { if (c != traits_type::eof()) ++count; return traits_type::not_eof(c); }
+};
+}  // namespace
 using Clock = std::chrono::steady_clock;
 
 static double Seconds(Clock::time_point start) {
@@ -100,6 +111,17 @@ int main(int argc, char** argv) {
         const auto key            = SHIPGetBootstrapKey(kp.secretKey->GetKeyTag());
         std::cout << "context_s=" << contextSeconds << " keygen_s=" << keygenSeconds
                   << " ship_key_in_memory_GiB=" << SHIPKeyStoredBytes(*key) / 1073741824.0 << std::endl;
+        // SHIP_SERIAL_SIZE=1: measured serialized size of the key (compact = seeded, and full).
+        if (std::getenv("SHIP_SERIAL_SIZE")) {
+            for (bool compact : {true, false}) {
+                CountingBuf buf;
+                std::ostream os(&buf);
+                const auto t0 = Clock::now();
+                SHIPSerializeBootstrapKey(os, *key, compact);
+                std::cout << "serialized_" << (compact ? "compact" : "full") << "_GiB=" << buf.count / 1073741824.0
+                          << " serialize_s=" << Seconds(t0) << std::endl;
+            }
+        }
 
         const uint32_t sizeQ = params->GetElementParams()->GetParams().size();
         std::vector<double> latencies;
@@ -131,16 +153,24 @@ int main(int argc, char** argv) {
             std::vector<double> x(S);
             for (auto& v : x)
                 v = u(rng);
-            auto ct = cc->Encrypt(kp.publicKey, cc->MakeCKKSPackedPlaintext(x, 1, sizeQ - 2, nullptr, S));
+            // SHIP_SK_ENCRYPT=1: secret-key encryption (smaller fresh noise than public-key encryption).
+            auto ptIn = cc->MakeCKKSPackedPlaintext(x, 1, sizeQ - 2, nullptr, S);
+            auto ct   = std::getenv("SHIP_SK_ENCRYPT") ? cc->Encrypt(kp.secretKey, ptIn) : cc->Encrypt(kp.publicKey, ptIn);
+            Plaintext ptDec;  // decryption of the input: separates bootstrapping error from encryption noise
+            cc->Decrypt(kp.secretKey, ct, &ptDec);
+            ptDec->SetLength(S);
             start          = Clock::now();
             auto out       = cc->EvalSHIPBootstrap(ct);
             const double s = Seconds(start);
             Plaintext pt;
             cc->Decrypt(kp.secretKey, out, &pt);
             pt->SetLength(S);
-            double eps = 0;
-            for (uint32_t i = 0; i < S; ++i)
-                eps = std::max(eps, std::abs(pt->GetCKKSPackedValue()[i].real() - x[i]));
+            double eps = 0, epsDec = 0, encErr = 0;
+            for (uint32_t i = 0; i < S; ++i) {
+                eps    = std::max(eps, std::abs(pt->GetCKKSPackedValue()[i].real() - x[i]));
+                epsDec = std::max(epsDec, std::abs(pt->GetCKKSPackedValue()[i].real() - ptDec->GetCKKSPackedValue()[i].real()));
+                encErr = std::max(encErr, std::abs(ptDec->GetCKKSPackedValue()[i].real() - x[i]));
+            }
             worst = std::max(worst, eps);
             if (set == "custom") {
                 // systematic (scale) vs. random error: least-squares ratio and residual
@@ -169,7 +199,8 @@ int main(int argc, char** argv) {
             latencies.push_back(s);
             const uint32_t limbs = out->GetElements()[0].GetNumOfElements();
             std::cout << "trial=" << t << " latency_s=" << s << " max_real_error=" << eps
-                      << " precision_bits=" << -std::log2(eps) << " output_limbs=" << limbs
+                      << " precision_bits=" << -std::log2(eps) << " vs_input_decryption_bits=" << -std::log2(epsDec)
+                      << " input_encryption_error=" << encErr << " output_limbs=" << limbs
                       << " mult_levels_after=" << limbs - 2 << std::endl;
             if (t == 0 && set != "custom" && threads == threadList.front()) {
                 // IND-CPA^D decryption with noise flooding, emulated exactly as OpenFHE's NOISE_FLOODING_DECRYPT:
