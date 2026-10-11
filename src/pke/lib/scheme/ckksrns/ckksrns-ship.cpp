@@ -978,15 +978,17 @@ uint32_t SHIPProductTreeDepth(uint32_t hammingWeight) {
 
 SHIPContextSpec SHIPContextSpec::LL13() {
     // Paper LL13: Base 25, S2C 20, Mult 20, Boot 25 x 5, Aux 28, dnum 8, log PQ = 218.
-    // Here: Base 25, S2C/Mult 20, Boot 24 x 4 + 28 (output back at scale 2^20), Aux 28, dnum 8.
+    // Here: Base 25, S2C/Mult 20, Boot 23 x 4 + 26 (output back at scale 2^20), Aux 34, dnum 8, log2(QP) = 218.
+    // Moving one bit per product-tree prime to the auxiliary prime lowers the key-switching noise, which limits
+    // LL13 at these scales: 3.9-4.5 bits instead of 2.5-2.7 bits with Boot 24 / Aux 28 (research/ship/LIBRARY.md).
     SHIPContextSpec s;
     s.ringDim        = 1 << 13;
     s.firstModBits   = 25;
     s.scalingModBits = 20;
-    s.bootModBits    = 24;
+    s.bootModBits    = 23;
     s.multLevels     = 1;
     s.numLargeDigits = 8;
-    s.auxModBits     = 28;
+    s.auxModBits     = 34;
     return s;
 }
 
