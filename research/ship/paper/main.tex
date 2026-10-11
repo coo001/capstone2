@@ -33,10 +33,10 @@
 \begin{abstract}
 SHIP (Cheon, Hanrot, Kim and Stehl\'e, EUROCRYPT 2025) is a CKKS bootstrapping algorithm that replaces the top-level homomorphic DFT and the polynomial approximation of modular reduction by $h$ independent blind rotations and a product tree, using only $6$ levels for a sparse secret of Hamming weight $h=31$.
 We report, to the best of our knowledge, the first publicly available implementation of SHIP, as a feature of a fork of OpenFHE~1.4.2 with a \texttt{CryptoContext} API, key serialization, seed-compressed keys ($0.50\times$) and disk-backed keys.
-We run the four parameter sets of the paper with small, documented deviations: LL14 and HT15 are within $0.7$ bits of the published median precision, while LL13 and HT14 are $2.2$ and $0.5$ bits below.
+We run the four parameter sets of the paper with small, documented deviations: LL14 and HT15 are within $0.7$ bits of the published median precision, HT14 is $0.5$ bits below, and LL13 reaches $3.1$ bits ($4.3$ with secret-key encryption; paper: $4.45$) after moving one bit per product-tree prime to the auxiliary prime within the same budget.
 Three findings go beyond reproduction.
 (1)~At SHIP's small scales, the approximate ModDown of hybrid key switching floors instead of rounding; exact centered rounding improves LL14 by $0.5$ bits.
-(2)~For the sparse encapsulation key, the lattice-estimator version cited by the SHIP authors rates $(\log N,\log(Pq_0))=(13,55)$ at $2^{143.6}$ under its default attacks but at $2^{116.8}$ under the dual meet-in-the-middle hybrid, and $(14,100)$ at $2^{119.1}$. Shrinking the special prime fixes this but costs precision (LL14 drops to $8$ bits). We therefore decompose the encapsulation key into $8$-bit digits, which lets the special prime shrink to $17$ bits without precision loss: the new defaults reach $2^{135.6}$--$2^{155.7}$ under every attack for LL14, HT14 and HT15 and $2^{127.6}$ for LL13. An entropy-matched model of SHIP's windowed secret lowers these estimates by $8$--$15$ bits and leaves LL13 and LL14 below $2^{128}$, which identifies the windowed secret as the remaining weak point.
+(2)~For the sparse encapsulation key, the lattice-estimator version cited by the SHIP authors rates $(\log N,\log(Pq_0))=(13,55)$ at $2^{143.6}$ under its default attacks but at $2^{116.8}$ under the dual meet-in-the-middle hybrid, and $(14,100)$ at $2^{119.1}$. Shrinking the special prime fixes this but costs precision (LL14 drops to $8$ bits). We therefore decompose the encapsulation key into $8$-bit digits, which lets the special prime shrink to $17$ bits without precision loss: the new defaults reach $2^{135.6}$--$2^{155.7}$ under every attack for LL14, HT14 and HT15 and $2^{127.6}$ for LL13. An entropy-matched model of SHIP's windowed secret lowers these estimates by $8$--$15$ bits and leaves LL13 and LL14 below $2^{128}$, which identifies the windowed secret as the remaining weak point; widening LL14's window from $264$ to $396$ restores $2^{128}$ under that model at $28\%$ more latency.
 (3)~Against OpenFHE's bootstrapping tuned with the same sparse-secret encapsulation and an equal number of slots, SHIP LL14 is $1.6$--$2.0\times$ faster at $4$--$15$ threads on a $15$-core laptop CPU, but slower on one thread, $4$ bits less precise and not more memory-efficient.
 SHIP's practical advantage is multi-threaded latency at a four times smaller ring degree.
 \end{abstract}
@@ -183,8 +183,8 @@ HE-std bound & 218 & 438 & 438 & 881 \\
 $d_{\mathrm{num}}$ & 8 & 4 & 8 & 6 (4) \\
 base, S2C & 25, 20 & 48, 37 & 28, 23 & 51 (50), 39 \\
 user levels & 1$\times$21 (20) & 1$\times$37 & 9$\times$23--24 & 9$\times$39--40 \\
-boot primes & 24--28 (25) & 42--48 (43) & 24--25 (25) & 46--54 (46) \\
-$P$ & 28 & 2$\times$50 & 1$\times$55 (2$\times$29) & 3$\times$50 (4$\times$53) \\
+boot primes & 23--26 (25) & 42--48 (43) & 24--25 (25) & 46--54 (46) \\
+$P$ & 34 (28) & 2$\times$50 & 1$\times$55 (2$\times$29) & 3$\times$50 (4$\times$53) \\
 $w$, $\theta$, $B$ & 175, 6, 4 & 264, 9, 4 & 264, 9, 4 & 528, 17, 4 \\
 $\lgqp$ & 42 (55) & 65 (100) & 45 (100) & 68 (105) \\
 key (GiB) & 8.0 & 10.2 / 5.1 & 31.5 & 69.6 \\
@@ -361,7 +361,32 @@ This lowers the estimates by $8$--$15$ bits (Table~\ref{tab:defaults}); for the 
 Under this heuristic, HT14 and HT15 remain above $2^{133}$, but LL13 ($2^{119.2}$) and LL14 ($2^{122.5}$) do not reach $2^{128}$; for LL14 the remaining lever is a smaller $q_0$, which shrinks the gap $\gamma$ and costs precision (\S\ref{sec:eval}).
 An entropy match is not a proof in either direction: an attacker may exploit the window structure more efficiently than the estimator's generic guessing, or less.
 The paper's own criterion $(4w)^{0.4h}\ge 2^{115}$~\cite{May21,CHKS25} gives $2^{117.2}$ for LL13 ($2.2$ bits of margin), $2^{124.6}$ for LL14 and HT14 and $2^{137.0}$ for HT15.
-Together, these results make the windowed secret, not the encapsulation modulus, the binding security constraint of the low-latency sets, and a dedicated attack analysis is the first item of future work.
+Together, these results make the windowed secret, not the encapsulation modulus, the binding security constraint of the low-latency sets; a dedicated attack analysis remains future work.
+
+\paragraph{Hardening the windowed secret}
+The window width $w$ trades blind-rotation cost for entropy: the number of mux steps is $\lceil\log_4\lceil 2w/\theta\rceil\rceil$, and the secret's entropy is $h\log_2(4w)$.
+Table~\ref{tab:window} measures this trade-off for LL14's primes and $\lgqp=65$ (digit-decomposed encapsulation).
+At $w=396$ the entropy-matched model reaches $2^{128.3}$ under the dual attack for $28\%$ more latency and $20\%$ more key material; at $w=528$ it reaches $2^{133.0}$ for $47\%$ more latency.
+Precision is unchanged.
+For LL13, $w=264$ gives only $2^{124.8}$, because $\lgqp=42$ already limits the generic model to $2^{127.6}$.
+We keep the paper's $w$ as the default and document $w=396$ for LL14 as the hardened choice.
+
+\begin{table}[t]
+\caption{Window width for LL14's primes ($\lgqp=65$, 8-bit digits; four threads, 5 runs). Security: entropy-matched model, current estimator.}
+\label{tab:window}
+\small
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{rrrrrrr}
+\toprule
+$w$ & mux steps & entropy & $h_{\mathrm{eq}}$ & primal / dual & latency & key \\
+\midrule
+264 & 3 & 311.4 & 27 & 127.9 / 122.5 & 1.59\,s & 12.2\,GiB \\
+396 & 4 & 329.5 & 29 & 133.7 / 128.3 & 2.03\,s & 14.6\,GiB \\
+528 & 4 & 342.4 & 30 & 136.6 / 133.0 & 2.34\,s & 14.6\,GiB \\
+792 & 4 & 360.5 & $\ge 31$ & 139.4 / 135.6 & 2.45\,s & 14.6\,GiB \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 %=====================================================================
 \section{Evaluation}
@@ -379,8 +404,8 @@ The latency measurements were taken before the digit-decomposed encapsulation be
 
 \subsection{Parameter sets of the paper}
 Table~\ref{tab:repro} compares LL13 and LL14 with the paper.
-Our median precision is $16.2$ bits for LL14 (paper: $16.9$, median of $100$ runs) and $2.3$ bits for LL13 (paper: $4.45$).
-Single-thread latencies ($2.98$\,s and $5.28$\,s) are close to the published single-core figures ($3.02$\,s and $4.91$\,s), but the CPUs, instruction sets and libraries differ, so we treat this agreement as indicative only.
+Our median precision is $16.2$ bits for LL14 (paper: $16.9$, median of $100$ runs) and $3.1$ bits for LL13 (paper: $4.45$); the LL13 column uses the re-balanced primes described below.
+Single-thread latencies ($3.10$\,s and $5.28$\,s) are close to the published single-core figures ($3.02$\,s and $4.91$\,s), but the CPUs, instruction sets and libraries differ, so we treat this agreement as indicative only.
 
 \begin{table}[t]
 \caption{Low-latency sets. Precision: median [min--max] over 15 runs. Latency: median [min--max] of 5 runs. Paper: HEaaN on AMD EPYC 7473X.}
@@ -390,30 +415,28 @@ Single-thread latencies ($2.98$\,s and $5.28$\,s) are close to the published sin
 \toprule
  & LL13 & LL14 \\
 \midrule
-precision (ours) & 2.3 [1.9--2.5] & 16.2 [16.0--16.5] \\
+precision (ours) & 3.1 [2.7--3.2] & 16.2 [16.0--16.5] \\
 precision (paper) & 4.45 & 16.9 \\
-1 thread (ours) & 2.98\,s [2.97--3.14] & 5.28\,s [5.24--5.74] \\
+1 thread (ours) & 3.10\,s [3.09--3.61] & 5.28\,s [5.24--5.74] \\
 1 core (paper) & 3.02\,s & 4.91\,s \\
 4 threads (ours) & 0.90\,s [0.87--0.92] & 1.45\,s [1.41--1.48] \\
 4 cores (paper) & 0.80\,s & 1.29\,s \\
-15 threads (ours) & 0.58\,s [0.58--0.59] & 0.83\,s [0.81--0.88] \\
+15 threads (ours) & 0.61\,s [0.60--0.62] & 0.83\,s [0.81--0.88] \\
 32 cores (paper) & 215\,ms & 333\,ms \\
-key generation & 17\,s & 24--26\,s \\
+key generation & 17--18\,s & 24--26\,s \\
 max RSS & 8.6\,GiB & 13.8\,GiB \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \paragraph{The LL13 gap}
-LL13 is $2.2$ bits below the paper.
-It is not caused by encryption noise: measured against the decryption of the input ciphertext, LL13 reaches $2.4$ bits (median of $5$), and with secret-key encryption (input error $8\times10^{-4}$ instead of $0.10$--$0.14$) it reaches $2.4$ bits as well.
-The error of about $0.2$ is therefore added inside bootstrapping.
-Lowering $p'$ from $30$ to $17$ bits changed the range only slightly ($2.2$--$2.6$ to $1.9$--$2.5$ bits), and the digit-decomposed key adds about $0.1$ bits.
-To locate it, we varied one parameter at a time in an otherwise identical $N=2^{13}$ context outside the 128-bit budget (secret-key encryption, $4$ runs each).
-Raising $p'$ from $17$ to $30$ bits changed little ($2.2$--$2.7$ bits), whereas raising the auxiliary prime $P$ from $28$ to $40$ or $60$ bits gave $3.2$--$3.6$ bits, splitting $P$ into two $28$-bit primes ($d_{\mathrm{num}}=4$) gave $3.4$--$3.5$ bits, and $60$-bit $P$ with $30$-bit product-tree primes gave $5.5$--$5.7$ bits, above the paper.
-LL13's precision is therefore limited mainly by key-switching noise with the $28$-bit auxiliary prime and the $24$-bit tree primes that the $218$-bit budget forces; HEaaN reaches $4.45$ bits with the same prime sizes, so its key switching is less noisy at these sizes than ours, for reasons we have not identified.
-LL14, whose primes are $37$--$50$ bits, is within $0.7$ bits of the paper.
-A larger $q_0$ does not help: with the scale fixed at $2^{20}$, every extra bit of $q_0$ (from $25$ to $30$) cost about one bit of precision, because the output $\frac{\gamma}{2\pi}\sin(2\pi\mu/\gamma)$ amplifies the relative error of the product tree by the gap $\gamma=q_0/\Delta$.
+With the paper's prime sizes (tree primes $24$ bits, $P$ $28$ bits), LL13 reached only $2.3$ bits, and the error was not caused by encryption noise: measured against the decryption of the input ciphertext, or with secret-key encryption (input error $8\times10^{-4}$ instead of $0.10$--$0.14$), it stayed at $2.4$ bits.
+To locate the error, we varied one parameter at a time in an $N=2^{13}$ context outside the 128-bit budget (secret-key encryption).
+Raising $p'$ changed little, whereas raising the auxiliary prime $P$ from $28$ to $40$--$60$ bits gave $3.2$--$3.6$ bits, and with the digit-decomposed encapsulation and a $60$-bit $P$, increasing the scale at a fixed gap $\gamma=2^5$ gave $4.5$--$5.2$, $6.3$--$6.7$ and $7.0$--$7.1$ bits for $\Delta=2^{20}$, $2^{22}$ and $2^{24}$, approaching the $7.3$-bit limit of the sine approximation.
+LL13 is therefore limited by key-switching noise at the small auxiliary prime, not by the algorithm.
+Within the same $218$-bit budget, moving one bit from each of the four product-tree primes to $P$ (tree primes $23$ bits, $P$ $34$ bits) raises LL13 from $2.5$--$2.7$ to $3.9$--$4.5$ bits with secret-key encryption (median $4.3$, paper $4.45$) and to $2.7$--$3.2$ bits with public-key encryption, where the input's encryption noise now dominates.
+We adopted these sizes for the LL13 preset (Tables~\ref{tab:keys} and~\ref{tab:repro}); the same change does not help LL14 ($15.2$ bits with $P$ $2\times 52$ and $41$-bit tree primes).
+A larger $q_0$ does not help either: with the scale fixed at $2^{20}$, every extra bit of $q_0$ cost about one bit of precision, because the output $\frac{\gamma}{2\pi}\sin(2\pi\mu/\gamma)$ amplifies the relative error of the product tree by the gap $\gamma=q_0/\Delta$.
 
 \paragraph{High-throughput sets}
 HT14 and HT15 do not fit in memory, so they ran with disk-backed factor keys (internal SSD) at four threads, two runs each, with the same bootstrapping code and the same $\lgqp$ as the defaults, while another application was running.
@@ -426,6 +449,8 @@ Precision and level counts match the paper; their speed needs a machine with eno
 For LL14, the factor loop takes $70\%$ of the latency on one thread ($3.72$\,s of $5.33$\,s), the S2C $23\%$ ($1.22$\,s) and the product tree $7\%$ ($0.39$\,s); encapsulation and conjugation are negligible.
 From $1$ to $15$ threads, the factor loop speeds up $6.3\times$, the S2C $5.9\times$ and the tree $4.8\times$.
 With $31$ factors on $15$ threads the factor loop runs in three waves on a mix of performance and efficiency cores, which limits the speed-up.
+Over $1$, $2$, $4$, $8$, $12$ and $15$ threads, LL14 takes $5.28$, $3.18$, $1.45$, $1.11$, $0.89$ and $0.83$\,s, while the best equal-slot OpenFHE configuration takes $4.69$, $3.31$, $2.26$, $1.88$, $1.85$ and $1.67$\,s (Figure~\ref{fig:scaling}).
+Fitting Amdahl's law gives a serial fraction of $0.09$ for SHIP and $0.33$ for OpenFHE; on $32$ identical cores this would predict about $0.64$\,s and $1.63$\,s, but our cores are heterogeneous and we could not test a many-core server.
 
 \subsection{Comparison with tuned OpenFHE bootstrapping}
 
@@ -449,7 +474,7 @@ We did not evaluate meta-bootstrapping~\cite{BCCKK22}, which trades latency for 
 \cmidrule(lr){5-7}\cmidrule(lr){8-9}
 Method & level budget & $N$ & slots & 1 thr & 4 thr & 15 thr & 1 thr & 15 thr & 1 thr (s) & (GiB) & (GiB) \\
 \midrule
-SHIP LL13 (1.9--2.5 bits) & -- & $2^{13}$ & 4{,}096 & 2.98 & 0.90 & 0.58 & 3 & 13 & 17 & 8.6 & 8.0 \\
+SHIP LL13 (2.7--3.2 bits) & -- & $2^{13}$ & 4{,}096 & 3.10 & 0.90 & 0.61 & 4 & 18 & 18 & 8.6 & 8.0 \\
 SHIP LL14 (16.0--16.5 bits) & -- & $2^{14}$ & 8{,}192 & 5.28 & \textbf{1.45} & \textbf{0.83} & 25 & 158 & 26 & 13.8 & 10.2 / 5.1c \\
 \midrule
 OpenFHE (19.9--20.1 bits) & (2,2) & $2^{16}$ & 8{,}192 & 6.20 & 2.82 & 2.13 & 26 & 77 & 36 & 16.3 & 9.1 \\
@@ -468,7 +493,7 @@ OpenFHE (6.7--7.2 bits) & (3,3) & $2^{15}$ & 16{,}384 & 4.89 & 2.44 & 1.85 & 23 
 \begin{axis}[
   width=\columnwidth, height=5.2cm,
   xmode=log, ymode=log, log basis x=2,
-  xtick={1,4,15}, xticklabels={1,4,15},
+  xtick={1,2,4,8,15}, xticklabels={1,2,4,8,15},
   xlabel={threads}, ylabel={latency (s)},
   legend style={font=\scriptsize, at={(0.5,-0.32)}, anchor=north, draw=none},
   legend columns=2,
@@ -476,11 +501,11 @@ OpenFHE (6.7--7.2 bits) & (3,3) & $2^{15}$ & 16{,}384 & 4.89 & 2.44 & 1.85 & 23 
   tick label style={font=\scriptsize}, label style={font=\small}]
 \addplot+[mark=square*] coordinates {(1,6.21) (4,2.87) (15,1.74)};
 \addlegendentry{OpenFHE $2^{16}$, 32{,}768 slots}
-\addplot+[mark=triangle*] coordinates {(1,4.69) (4,2.26) (15,1.67)};
+\addplot+[mark=triangle*] coordinates {(1,4.69) (2,3.31) (4,2.26) (8,1.88) (12,1.85) (15,1.67)};
 \addlegendentry{OpenFHE $2^{16}$, 8{,}192 slots}
-\addplot+[mark=*] coordinates {(1,5.28) (4,1.45) (15,0.83)};
+\addplot+[mark=*] coordinates {(1,5.28) (2,3.18) (4,1.45) (8,1.11) (12,0.89) (15,0.83)};
 \addlegendentry{SHIP LL14 (8{,}192 slots)}
-\addplot+[mark=diamond*] coordinates {(1,2.98) (4,0.90) (15,0.58)};
+\addplot+[mark=diamond*] coordinates {(1,3.10) (4,0.90) (15,0.61)};
 \addlegendentry{SHIP LL13 (4{,}096 slots)}
 \end{axis}
 \end{tikzpicture}
@@ -523,7 +548,7 @@ All measurements come from one laptop CPU with mixed core types, no thread pinni
 HT14 and HT15 were measured under concurrent load with disk-backed keys.
 The baseline was tuned over level budgets, slot counts, $d_{\mathrm{num}}$ and scale sizes, but not with meta-bootstrapping, and OpenFHE's bootstrapping uses \texttt{FLEXIBLEAUTO} while SHIP uses \texttt{FIXEDMANUAL}.
 Security estimates rest on two estimator versions with one cost model and ignore memory and the windowed secret structure.
-The remaining LL13 gap to HEaaN is not fully explained, and the noise-flooding results come from an emulation.
+The thread-scaling points at $2$, $8$ and $12$ threads were measured in a later session than those at $1$, $4$ and $15$, and the noise-flooding results come from an emulation.
 Finally, the implementation supports \texttt{FIXEDMANUAL}, hybrid key switching and full packing only, and has not been independently reviewed.
 
 %=====================================================================
