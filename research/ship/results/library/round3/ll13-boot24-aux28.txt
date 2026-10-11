@@ -1,0 +1,23 @@
+set=custom N=8192 slots=4096 log2QP=218 HEStd_128_classic_max_log2QP=218 dnum=8
+Q_bits=25 20 21 28 24 25 24 25  P_bits=28 
+h=31 w=175 theta=6 B=4 encaps_digit_bits=8 log2(q0*p')<=42 (estimator bound 1000) May21_window_cost_log2=117.195 (>=115 required)
+estimated_ship_key_GiB=7.9502 factor_dir=(memory)
+context_s=0.0127682 keygen_s=17.3291 ship_key_in_memory_GiB=7.95044
+openmp=on max_threads=4
+threads=4
+diag worst_slot=3738 error_slot0=0.0615007 max_error_excluding_slot0=0.172367
+diag ratio=0.995851 residual_after_ratio=0.171808 max_imag=0.00851854 slot0=(-0.509419,-0.000181197) x0=-0.447918
+trial=0 latency_s=1.15185 max_real_error=0.172367 precision_bits=2.53644 vs_input_decryption_bits=2.53488 input_encryption_error=0.000690671 output_limbs=3 mult_levels_after=1
+diag worst_slot=2739 error_slot0=0.0241298 max_error_excluding_slot0=0.153246
+diag ratio=0.995574 residual_after_ratio=0.15097 max_imag=0.00824957 slot0=(-0.425503,-0.001524) x0=-0.401373
+trial=1 latency_s=0.999696 max_real_error=0.153246 precision_bits=2.70608 vs_input_decryption_bits=2.70767 input_encryption_error=0.000732036 output_limbs=3 mult_levels_after=1
+diag worst_slot=2937 error_slot0=0.0377896 max_error_excluding_slot0=0.161454
+diag ratio=0.998917 residual_after_ratio=0.16196 max_imag=0.00834597 slot0=(0.0221076,0.000313462) x0=-0.015682
+trial=2 latency_s=0.989031 max_real_error=0.161454 precision_bits=2.63081 vs_input_decryption_bits=2.63273 input_encryption_error=0.000719861 output_limbs=3 mult_levels_after=1
+diag worst_slot=3524 error_slot0=0.022762 max_error_excluding_slot0=0.172879
+diag ratio=0.994625 residual_after_ratio=0.172334 max_imag=0.0085137 slot0=(0.618769,-0.00094906) x0=0.596007
+trial=3 latency_s=0.990307 max_real_error=0.172879 precision_bits=2.53217 vs_input_decryption_bits=2.53442 input_encryption_error=0.000758935 output_limbs=3 mult_levels_after=1
+diag worst_slot=703 error_slot0=0.0229958 max_error_excluding_slot0=0.160354
+diag ratio=0.996368 residual_after_ratio=0.160637 max_imag=0.00872589 slot0=(0.79131,0.000501769) x0=0.814306
+trial=4 latency_s=0.989853 max_real_error=0.160354 precision_bits=2.64067 vs_input_decryption_bits=2.63933 input_encryption_error=0.000700061 output_limbs=3 mult_levels_after=1
+summary set=custom trials=5 median_latency_s=0.990307 worst_precision_bits=2.53217
