@@ -1,9 +1,12 @@
 // OpenFHE's standard CKKS bootstrapping (EvalBootstrap) with 128-bit HE-standard parameters, as the baseline
 // for ship-paper-bench (paper Section 5.3 compares SHIP with the conventional bootstrapping of HEaaN).
 // usage: ship-baseline-bench [scalingModBits] [firstModBits] [trials] [ringDim(0 = chosen by security)] [dnum] [levelBudget]
-//                            [uniform|sparse_encapsulated]
+//                            [uniform|sparse_encapsulated] [slots (0 = N/2)]
 // sparse_encapsulated: OpenFHE's sparse-secret encapsulation (h = 32 key modulo q0 * p0), the same idea as SHIP's.
 #include "openfhe.h"
+#include "cryptocontext-ser.h"
+#include "key/key-ser.h"
+#include "scheme/ckksrns/ckksrns-ser.h"
 
 #include <algorithm>
 #include <chrono>
@@ -16,6 +19,16 @@
 #endif
 
 using namespace lbcrypto;
+
+namespace {
+class CountingBuf : public std::streambuf {
+public:
+    uint64_t count = 0;
+protected:
+    std::streamsize xsputn(const char*, std::streamsize n) override { count += n; return n; }
+    int_type overflow(int_type c) override { if (c != traits_type::eof()) ++count; return traits_type::not_eof(c); }
+};
+}  // namespace
 using Clock = std::chrono::steady_clock;
 
 int main(int argc, char** argv) {
@@ -52,7 +65,7 @@ int main(int argc, char** argv) {
         cc->Enable(ADVANCEDSHE);
         cc->Enable(FHE);
         const uint32_t N     = cc->GetRingDimension();
-        const uint32_t slots = N / 2;
+        const uint32_t slots = argc > 8 && std::stoul(argv[8]) ? std::stoul(argv[8]) : N / 2;  // sparse packing if < N/2
         auto params          = std::dynamic_pointer_cast<CryptoParametersCKKSRNS>(cc->GetCryptoParameters());
         std::cout << "baseline N=" << N << " slots=" << slots << " depth=" << depth
                   << " log2QP=" << params->GetParamsQP()->GetModulus().GetMSB()
@@ -67,6 +80,15 @@ int main(int argc, char** argv) {
         cc->EvalMultKeyGen(kp.secretKey);
         cc->EvalBootstrapKeyGen(kp.secretKey, slots);
         std::cout << "setup_keygen_s=" << std::chrono::duration<double>(Clock::now() - start).count() << std::endl;
+        // BASE_SERIAL_SIZE=1: serialized size of the bootstrapping keys (rotation + conjugation + encapsulation keys)
+        if (std::getenv("BASE_SERIAL_SIZE")) {
+            CountingBuf rot, mult;
+            std::ostream osRot(&rot), osMult(&mult);
+            CryptoContextImpl<DCRTPoly>::SerializeEvalAutomorphismKey(osRot, SerType::BINARY);
+            CryptoContextImpl<DCRTPoly>::SerializeEvalMultKey(osMult, SerType::BINARY);
+            std::cout << "serialized_automorphism_keys_GiB=" << rot.count / 1073741824.0
+                      << " serialized_mult_key_GiB=" << mult.count / 1073741824.0 << std::endl;
+        }
         std::vector<int> threadList{0};
         if (const char* env = std::getenv("SHIP_THREADS")) {
             threadList.clear();
