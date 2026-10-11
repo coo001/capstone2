@@ -1,0 +1,8 @@
+requested_depth=19
+baseline N=65536 slots=32768 depth=19 log2QP=1602 HEStd_128_classic_max_log2QP=1747 secret=sparse_encapsulated log2(q0*p0)=120 scale_bits=59 first_bits=60 levelBudget=4,4
+setup_keygen_s=7.28327
+threads=4
+trial=0 latency_s=2.86704 max_real_error=2.35074e-06 precision_bits=18.6985 levels_after=1
+trial=1 latency_s=2.74541 max_real_error=2.49834e-06 precision_bits=18.6106 levels_after=1
+trial=2 latency_s=2.9766 max_real_error=2.50668e-06 precision_bits=18.6058 levels_after=1
+summary baseline N=65536 median_latency_s=2.86704 worst_precision_bits=18.6058
