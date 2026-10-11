@@ -237,6 +237,32 @@ TEST_F(UTCKKSRNS_SHIP, MessageBoundWidensInputRange) {
     EXPECT_LT(MaxError(cc, kp.secretKey, cc->EvalSHIPBootstrap(ct), x), 64 * 1e-4);
 }
 
+TEST_F(UTCKKSRNS_SHIP, DigitDecomposedEncapsulationAllowsSmallSpecialPrime) {
+    // q0 has 60 bits: with a 17-bit p' and no decomposition the encapsulation noise (q0 / p') ruins the output;
+    // 8-bit digits keep it negligible.
+    auto cc          = GenSHIPCryptoContext(ToySpec(8));
+    const uint32_t S = cc->GetRingDimension() / 2;
+    const uint32_t Q = cc->GetElementParams()->GetParams().size();
+    auto kp          = cc->KeyGen();
+    cc->EvalMultKeyGen(kp.secretKey);
+    auto x  = Random(S, true, 17);
+    auto ct = cc->Encrypt(kp.publicKey, cc->MakeCKKSPackedPlaintext(x, 1, Q - 2, nullptr, S));
+    auto p  = ToyParams();
+    p.encapsulationModBits = 17;
+    p.encapsulationDigitBits = 0;
+    cc->EvalSHIPBootstrapKeyGen(kp.secretKey, p);
+    EXPECT_GT(MaxError(cc, kp.secretKey, cc->EvalSHIPBootstrap(ct), x), 1e-2);
+    p.encapsulationDigitBits = 8;
+    cc->EvalSHIPBootstrapKeyGen(kp.secretKey, p);
+    EXPECT_LT(MaxError(cc, kp.secretKey, cc->EvalSHIPBootstrap(ct), x), 1e-4);
+    // The decomposed key survives a compact serialization round trip.
+    std::stringstream ss;
+    CryptoContextImpl<DCRTPoly>::SerializeEvalSHIPBootstrapKey(ss, kp.secretKey->GetKeyTag(), true);
+    CryptoContextImpl<DCRTPoly>::ClearEvalSHIPBootstrapKeys();
+    cc->DeserializeEvalSHIPBootstrapKey(ss);
+    EXPECT_LT(MaxError(cc, kp.secretKey, cc->EvalSHIPBootstrap(ct), x), 1e-4);
+}
+
 TEST_F(UTCKKSRNS_SHIP, PresetContextsMeetHEStandard) {
     for (const auto& spec : {SHIPContextSpec::LL13(), SHIPContextSpec::LL14(), SHIPContextSpec::HT14(),
                              SHIPContextSpec::HT15()}) {
