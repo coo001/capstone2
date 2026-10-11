@@ -1,0 +1,20 @@
+set=custom N=8192 slots=4096 log2QP=265 HEStd_128_classic_max_log2QP=218 dnum=8
+Q_bits=28 22 22 30 26 26 27 26  P_bits=60 
+h=31 w=175 theta=6 B=4 encaps_digit_bits=8 log2(q0*p')<=45 (estimator bound 1000) May21_window_cost_log2=117.195 (>=115 required)
+estimated_ship_key_GiB=7.9502 factor_dir=(memory)
+context_s=0.0121548 keygen_s=16.58 ship_key_in_memory_GiB=7.95044
+openmp=on max_threads=4
+threads=4
+diag worst_slot=1407 error_slot0=0.00195207 max_error_excluding_slot0=0.00973819
+diag ratio=0.996075 residual_after_ratio=0.00922088 max_imag=0.00181095 slot0=(-0.445966,-0.000123499) x0=-0.447918
+trial=0 latency_s=0.989862 max_real_error=0.00973819 precision_bits=6.68213 vs_input_decryption_bits=6.66394 input_encryption_error=0.000200849 output_limbs=3 mult_levels_after=1
+diag worst_slot=2181 error_slot0=0.00132014 max_error_excluding_slot0=0.0119099
+diag ratio=0.996097 residual_after_ratio=0.00807693 max_imag=0.001788 slot0=(-0.400053,0.000267721) x0=-0.401373
+trial=1 latency_s=0.957679 max_real_error=0.0119099 precision_bits=6.3917 vs_input_decryption_bits=6.3898 input_encryption_error=0.000171355 output_limbs=3 mult_levels_after=1
+diag worst_slot=3191 error_slot0=0.0015548 max_error_excluding_slot0=0.0123865
+diag ratio=0.996058 residual_after_ratio=0.00863817 max_imag=0.0020177 slot0=(-0.0141272,0.000219174) x0=-0.015682
+trial=2 latency_s=0.971741 max_real_error=0.0123865 precision_bits=6.33508 vs_input_decryption_bits=6.33202 input_encryption_error=0.000193232 output_limbs=3 mult_levels_after=1
+diag worst_slot=384 error_slot0=0.000991787 max_error_excluding_slot0=0.0110482
+diag ratio=0.996091 residual_after_ratio=0.0089376 max_imag=0.00279744 slot0=(0.596999,-0.000221213) x0=0.596007
+trial=3 latency_s=1.11191 max_real_error=0.0110482 precision_bits=6.50004 vs_input_decryption_bits=6.49337 input_encryption_error=0.00017236 output_limbs=3 mult_levels_after=1
+summary set=custom trials=4 median_latency_s=0.989862 worst_precision_bits=6.33508
