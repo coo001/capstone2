@@ -109,6 +109,11 @@ struct SHIPParams {
     /// 0: the largest size with log2(q0 p') within the 128-bit bound for h = 31 (N = 2^13..2^15): 42, 88, 105
     /// by the lattice estimator (the paper states 55, 100, 105). Valid sizes: 17..60.
     uint32_t encapsulationModBits = 28;
+    /// Gadget decomposition of the dense-to-sparse switching key: the q0 component of the input is split into
+    /// signed digits of this many bits, with one key per digit, so the switching noise grows with 2^digitBits / p'
+    /// instead of q0 / p'. This allows a small p' (strong sparse-key security) without losing precision.
+    /// 0: no decomposition (one key).
+    uint32_t encapsulationDigitBits = 0;
     /// Real-valued messages need one half bootstrap; complex messages need two.
     bool realOnly = true;
     /// Supported message magnitude K: messages are divided by K before the sine evaluation and multiplied
@@ -116,8 +121,8 @@ struct SHIPParams {
     /// log2(K) bits of precision.
     double messageBound = 1.0;
 
-    /// Paper choices for a preset context: w = max(175, N/(2h)), theta from Table 2, and p' chosen at key
-    /// generation as the largest with log2(q0 p') within the lattice-estimator bound (42, 88, 105 for N = 2^13..2^15).
+    /// Paper choices for a preset context: w = max(175, N/(2h)), theta from Table 2; the encapsulation key uses the
+    /// smallest p' (17 bits) with 8-bit digits, i.e. log2(q0 p') = 42, 65, 45, 68 for LL13, LL14, HT14, HT15.
     static SHIPParams Recommended(const SHIPContextSpec& spec);
 };
 
