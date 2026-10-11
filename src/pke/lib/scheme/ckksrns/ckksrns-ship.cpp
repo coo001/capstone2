@@ -109,7 +109,10 @@ struct SHIPFactorKey {
 struct SHIPEncapsulationKey {
     std::shared_ptr<ILNativeParams> paramsQ0;
     std::shared_ptr<ILNativeParams> paramsP;
-    NativePoly bQ0, aQ0, bP, aP;  // Enc_{s_sparse}(p' * s_dense) mod q0 * p', EVALUATION format
+    // Digit j: Enc_{s_sparse}(p' * 2^(j * digitBits) * s_dense) mod q0 * p', EVALUATION format.
+    // digitBits = 0: a single key (no decomposition).
+    uint32_t digitBits = 0;
+    std::vector<NativePoly> bQ0, aQ0, bP, aP;
     NativeInteger pInvModQ0;
 };
 
@@ -152,7 +155,7 @@ constexpr uint64_t kColumnId   = uint64_t(1) << 60;
 constexpr uint64_t kMuxId      = uint64_t(2) << 60;
 constexpr uint64_t kRotationId = uint64_t(3) << 60;
 constexpr uint64_t kConjId     = uint64_t(4) << 60;
-constexpr uint32_t kFormatVersion = 1;
+constexpr uint32_t kFormatVersion = 2;  // 2: digit-decomposed encapsulation key
 
 std::shared_ptr<CryptoParametersCKKSRNS> CkksParams(const CC& cc) {
     auto params = std::dynamic_pointer_cast<CryptoParametersCKKSRNS>(cc->GetCryptoParameters());
@@ -634,19 +637,67 @@ NativePoly ModDownByP(NativePoly xQ0, NativePoly xP, const SHIPEncapsulationKey&
     return (xQ0 - xP) * key.pInvModQ0;
 }
 
+// Signed base-2^digitBits digits of a polynomial modulo q0 (centered), each lifted to q0 and to p'.
+std::vector<std::pair<NativePoly, NativePoly>> EncapsulationDigits(NativePoly a, const SHIPEncapsulationKey& k) {
+    a.SetFormat(Format::COEFFICIENT);
+    const uint32_t count = static_cast<uint32_t>(k.bQ0.size());
+    const uint32_t N     = a.GetRingDimension();
+    const NativeInteger q0 = k.paramsQ0->GetModulus(), pp = k.paramsP->GetModulus();
+    std::vector<std::pair<NativePoly, NativePoly>> digits;
+    if (k.digitBits == 0) {
+        auto aP = a;
+        aP.SwitchModulus(pp, k.paramsP->GetRootOfUnity(), 0, 0);
+        a.SetFormat(Format::EVALUATION);
+        aP.SetFormat(Format::EVALUATION);
+        digits.emplace_back(std::move(a), std::move(aP));
+        return digits;
+    }
+    for (uint32_t j = 0; j < count; ++j)
+        digits.emplace_back(NativePoly(k.paramsQ0, Format::COEFFICIENT, true), NativePoly(k.paramsP, Format::COEFFICIENT, true));
+    const uint64_t q = q0.ConvertToInt<uint64_t>(), p = pp.ConvertToInt<uint64_t>();
+    const int64_t base = int64_t(1) << k.digitBits, half = base / 2;
+    for (uint32_t i = 0; i < N; ++i) {
+        uint64_t u = a[i].ConvertToInt<uint64_t>();
+        int64_t v  = u > q / 2 ? static_cast<int64_t>(u) - static_cast<int64_t>(q) : static_cast<int64_t>(u);
+        for (uint32_t j = 0; j < count; ++j) {
+            int64_t r = ((v % base) + base) % base;
+            if (r >= half)
+                r -= base;
+            v = (v - r) / base;
+            digits[j].first[i]  = NativeInteger(r >= 0 ? uint64_t(r) : q - uint64_t(-r));
+            digits[j].second[i] = NativeInteger(r >= 0 ? uint64_t(r) : p - uint64_t(-r));
+        }
+        if (v != 0)
+            OPENFHE_THROW("SHIP: encapsulation digit decomposition overflow");
+    }
+    for (auto& d : digits) {
+        d.first.SetFormat(Format::EVALUATION);
+        d.second.SetFormat(Format::EVALUATION);
+    }
+    return digits;
+}
+
+// Number of signed digits of size digitBits needed for centered values modulo q0.
+uint32_t EncapsulationDigitCount(const NativeInteger& q0, uint32_t digitBits) {
+    return digitBits == 0 ? 1 : (q0.GetMSB() + digitBits) / digitBits;
+}
+
 // Sparse secret encapsulation at modulus q0 * p' (paper Section 2.2 and 5.2, [BTH22]).
 CT Encapsulate(const CT& input, const SHIPBootstrapKey& key) {
     const auto& k = key.encapsulation;
     auto b        = input->GetElements()[0].GetElementAtIndex(0);
-    auto aQ0      = input->GetElements()[1].GetElementAtIndex(0);
     b.SetFormat(Format::EVALUATION);
-    aQ0.SetFormat(Format::COEFFICIENT);
-    auto aP = aQ0;
-    aP.SwitchModulus(k.paramsP->GetModulus(), k.paramsP->GetRootOfUnity(), 0, 0);
-    aQ0.SetFormat(Format::EVALUATION);
-    aP.SetFormat(Format::EVALUATION);
-    auto newB     = b + ModDownByP(aQ0 * k.bQ0, aP * k.bP, k);
-    auto newA     = ModDownByP(aQ0 * k.aQ0, aP * k.aP, k);
+    const auto digits = EncapsulationDigits(input->GetElements()[1].GetElementAtIndex(0), k);
+    NativePoly sbQ0(k.paramsQ0, Format::EVALUATION, true), sbP(k.paramsP, Format::EVALUATION, true);
+    NativePoly saQ0(k.paramsQ0, Format::EVALUATION, true), saP(k.paramsP, Format::EVALUATION, true);
+    for (size_t j = 0; j < digits.size(); ++j) {
+        sbQ0 += digits[j].first * k.bQ0[j];
+        sbP += digits[j].second * k.bP[j];
+        saQ0 += digits[j].first * k.aQ0[j];
+        saP += digits[j].second * k.aP[j];
+    }
+    auto newB     = b + ModDownByP(std::move(sbQ0), std::move(sbP), k);
+    auto newA     = ModDownByP(std::move(saQ0), std::move(saP), k);
     auto elements = input->GetElements();
     elements[0].SetElementAtIndex(0, std::move(newB));
     elements[1].SetElementAtIndex(0, std::move(newA));
@@ -990,8 +1041,11 @@ SHIPParams SHIPParams::Recommended(const SHIPContextSpec& spec) {
     p.window               = std::max<uint32_t>(175, spec.ringDim / (2 * spec.hammingWeight));
     p.columnSize           = spec.ringDim == (1 << 13) ? 6 : spec.ringDim == (1 << 14) ? 9 : 17;
     p.muxBase              = 4;
-    p.encapsulationModBits = 0;  // chosen from the actual q0 by SHIPKeyGen
-    p.realOnly             = true;
+    // Smallest NTT-friendly p' (17 bits) with an 8-bit digit decomposition of the encapsulation key:
+    // log2(q0 p') = q0 + 17 (42, 65, 45, 68 for LL13, LL14, HT14, HT15) without precision loss.
+    p.encapsulationModBits   = 17;
+    p.encapsulationDigitBits = 8;
+    p.realOnly               = true;
     return p;
 }
 
@@ -1104,6 +1158,7 @@ std::shared_ptr<SHIPBootstrapKey> SHIPKeyGen(const PrivateKey<DCRTPoly>& private
         OPENFHE_THROW("SHIP requires full packing (batch size N/2)");
     if (sp.hammingWeight == 0 || sp.hammingWeight > N || sp.columnSize == 0 || sp.muxBase < 2 ||
         2 * sp.window > N || (sp.encapsulationModBits != 0 && (sp.encapsulationModBits < 17 || sp.encapsulationModBits > 60)) ||
+        sp.encapsulationDigitBits > 30 ||
         !(sp.messageBound >= 1.0) || !std::isfinite(sp.messageBound))
         OPENFHE_THROW("Invalid SHIP parameters");
     const uint32_t sizeQ     = params->GetElementParams()->GetParams().size();
@@ -1190,24 +1245,31 @@ std::shared_ptr<SHIPBootstrapKey> SHIPKeyGen(const PrivateKey<DCRTPoly>& private
         auto sparseP = sparseQ0;
         sparseP.SwitchModulus(pPrime, paramsP->GetRootOfUnity(), 0, 0);
         denseLimb.SetFormat(Format::COEFFICIENT);
-        auto denseP = denseLimb;
-        denseP.SwitchModulus(pPrime, paramsP->GetRootOfUnity(), 0, 0);
-        NativePoly eQ0(params->GetDiscreteGaussianGenerator(), paramsQ0, Format::COEFFICIENT);
-        auto eP = eQ0;
-        eP.SwitchModulus(pPrime, paramsP->GetRootOfUnity(), 0, 0);
-        for (auto* poly : {&sparseQ0, &sparseP, &denseLimb, &eQ0, &eP})
+        for (auto* poly : {&sparseQ0, &sparseP, &denseLimb})
             poly->SetFormat(Format::EVALUATION);
         NativePoly::DugType uniform;
-        NativePoly aQ0(uniform, paramsQ0, Format::EVALUATION);
-        NativePoly aP(uniform, paramsP, Format::EVALUATION);
         const NativeInteger pModQ0 = pPrime.Mod(q0);
         auto& enc                  = key->encapsulation;
         enc.paramsQ0               = paramsQ0;
         enc.paramsP                = paramsP;
-        enc.bQ0                    = eQ0 - aQ0 * sparseQ0 + denseLimb * pModQ0;
-        enc.aQ0                    = std::move(aQ0);
-        enc.bP                     = eP - aP * sparseP;
-        enc.aP                     = std::move(aP);
+        enc.digitBits              = sp.encapsulationDigitBits;
+        const uint32_t count       = EncapsulationDigitCount(q0, enc.digitBits);
+        NativeInteger factor(1);  // 2^(j * digitBits) mod q0
+        const NativeInteger base = enc.digitBits ? NativeInteger(uint64_t(1) << enc.digitBits).Mod(q0) : NativeInteger(1);
+        for (uint32_t j = 0; j < count; ++j) {
+            NativePoly eQ0(params->GetDiscreteGaussianGenerator(), paramsQ0, Format::COEFFICIENT);
+            auto eP = eQ0;
+            eP.SwitchModulus(pPrime, paramsP->GetRootOfUnity(), 0, 0);
+            eQ0.SetFormat(Format::EVALUATION);
+            eP.SetFormat(Format::EVALUATION);
+            NativePoly aQ0(uniform, paramsQ0, Format::EVALUATION);
+            NativePoly aP(uniform, paramsP, Format::EVALUATION);
+            enc.bQ0.push_back(eQ0 - aQ0 * sparseQ0 + denseLimb * pModQ0.ModMul(factor, q0));
+            enc.aQ0.push_back(std::move(aQ0));
+            enc.bP.push_back(eP - aP * sparseP);
+            enc.aP.push_back(std::move(aP));
+            factor = factor.ModMul(base, q0);
+        }
         enc.pInvModQ0              = pModQ0.ModInverse(q0);
     }
 
@@ -1356,13 +1418,14 @@ void SHIPSerializeBootstrapKey(std::ostream& os, const SHIPBootstrapKey& key, bo
     const std::string magic = "OpenFHE-SHIP";
     ar(magic, kFormatVersion, compact);
     const auto& p = key.params;
-    ar(p.hammingWeight, p.window, p.columnSize, p.muxBase, p.encapsulationModBits, p.realOnly, p.messageBound);
+    ar(p.hammingWeight, p.window, p.columnSize, p.muxBase, p.encapsulationModBits, p.encapsulationDigitBits, p.realOnly,
+       p.messageBound);
     ar(key.denseTag, key.sparseTag, key.ringDim, key.slots, key.treeDepth, key.leafExtraBits, key.seed);
     const auto& enc      = key.encapsulation;
     const uint64_t prime = enc.paramsP->GetModulus().ConvertToInt<uint64_t>();
     const uint64_t root  = enc.paramsP->GetRootOfUnity().ConvertToInt<uint64_t>();
     ar(prime, root);
-    ar(enc.bQ0, enc.aQ0, enc.bP, enc.aP);
+    ar(enc.digitBits, enc.bQ0, enc.aQ0, enc.bP, enc.aP);
     ar(key.packing.babyStep, key.packing.inputLevel, static_cast<uint32_t>(key.packing.rotations.size()));
     for (const auto& [r, rk] : key.packing.rotations)
         SaveRotationKey(ar, rk, compact);
@@ -1387,7 +1450,8 @@ std::shared_ptr<SHIPBootstrapKey> SHIPDeserializeBootstrapKey(std::istream& is, 
     auto key     = std::make_shared<SHIPBootstrapKey>();
     key->context = cc;
     auto& p      = key->params;
-    ar(p.hammingWeight, p.window, p.columnSize, p.muxBase, p.encapsulationModBits, p.realOnly, p.messageBound);
+    ar(p.hammingWeight, p.window, p.columnSize, p.muxBase, p.encapsulationModBits, p.encapsulationDigitBits, p.realOnly,
+       p.messageBound);
     ar(key->denseTag, key->sparseTag, key->ringDim, key->slots, key->treeDepth, key->leafExtraBits, key->seed);
     if (key->ringDim != cc->GetRingDimension())
         OPENFHE_THROW("SHIPDeserializeBootstrapKey: ring dimension does not match the context");
@@ -1397,7 +1461,7 @@ std::shared_ptr<SHIPBootstrapKey> SHIPDeserializeBootstrapKey(std::istream& is, 
     ar(pPrime, root);
     enc.paramsQ0 = params->GetElementParams()->GetParams()[0];
     enc.paramsP  = std::make_shared<ILNativeParams>(2 * key->ringDim, NativeInteger(pPrime), NativeInteger(root));
-    ar(enc.bQ0, enc.aQ0, enc.bP, enc.aP);
+    ar(enc.digitBits, enc.bQ0, enc.aQ0, enc.bP, enc.aP);
     enc.pInvModQ0 = NativeInteger(pPrime).Mod(enc.paramsQ0->GetModulus()).ModInverse(enc.paramsQ0->GetModulus());
     uint32_t rotations = 0;
     ar(key->packing.babyStep, key->packing.inputLevel, rotations);
