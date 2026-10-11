@@ -1,0 +1,17 @@
+N=128 h=4 trial=0 switch_error=1.56035e-09 slot_error=1.60657e-09 sine_oracle_error=3.88248e-10 output_level=4 input_towers=1 output_towers=6 elapsed_ms=18.0494
+N=128 h=4 trial=1 switch_error=1.58581e-09 slot_error=9.91861e-08 sine_oracle_error=3.33293e-10 output_level=4 input_towers=1 output_towers=6 elapsed_ms=16.8729
+N=128 h=4 trial=2 switch_error=1.4909e-09 slot_error=1.5824e-09 sine_oracle_error=3.55267e-10 output_level=4 input_towers=1 output_towers=6 elapsed_ms=16.4368
+N=128 h=4 trial=3 switch_error=1.39585e-09 slot_error=1.88885e-08 sine_oracle_error=4.05595e-10 output_level=4 input_towers=1 output_towers=6 elapsed_ms=16.3882
+N=128 h=4 trial=4 switch_error=1.45376e-09 slot_error=2.64211e-08 sine_oracle_error=3.61092e-10 output_level=4 input_towers=1 output_towers=6 elapsed_ms=15.7421
+N=128 full_reference_difference=1.25376e-09
+N=128 square_error=2.99507e-08 second_refresh_error=3.31358e-08
+N=128 large_message_error=1.64515 large_sine_oracle_error=8.43323e-10
+N=1024 h=8 trial=0 switch_error=2.39555e-08 slot_error=1.88487e-08 sine_oracle_error=1.84094e-08 output_level=5 input_towers=1 output_towers=5 elapsed_ms=270.074
+N=1024 h=8 trial=1 switch_error=2.38467e-08 slot_error=1.12803e-07 sine_oracle_error=1.75852e-08 output_level=5 input_towers=1 output_towers=5 elapsed_ms=263.427
+N=1024 h=8 trial=2 switch_error=2.34772e-08 slot_error=1.93125e-08 sine_oracle_error=1.89846e-08 output_level=5 input_towers=1 output_towers=5 elapsed_ms=263.777
+N=1024 h=8 trial=3 switch_error=2.41702e-08 slot_error=2.46516e-08 sine_oracle_error=1.95822e-08 output_level=5 input_towers=1 output_towers=5 elapsed_ms=267.445
+N=1024 h=8 trial=4 switch_error=2.3124e-08 slot_error=1.91476e-08 sine_oracle_error=1.70252e-08 output_level=5 input_towers=1 output_towers=5 elapsed_ms=267.928
+N=1024 full_reference_difference=4.65054e-08
+N=1024 square_error=1.70321e-08 second_refresh_error=4.50861e-08
+N=1024 large_message_error=1.64515 large_sine_oracle_error=2.87626e-08
+ALL FULL BOOTSTRAP CHECKS PASSED (toy parameters; paper equivalence/security unverified)

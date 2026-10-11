@@ -1,0 +1,600 @@
+\documentclass[sigconf,nonacm]{acmart}
+
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.17}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+
+\settopmatter{printacmref=false}
+\setcopyright{none}
+\renewcommand\footnotetextcopyrightpermission[1]{}
+
+\setlength{\emergencystretch}{2em}
+\newcommand{\Z}{\mathbb{Z}}
+\newcommand{\R}{\mathcal{R}}
+\newcommand{\lgqp}{\log_2(q_0 p')}
+% main-anon.tex defines \shipanonymous and passes the acmart option "anonymous" (WAHC double-blind submission).
+\newcommand{\coderef}{\ifdefined\shipanonymous{} as an anonymized artifact on request\else~\cite{ShipCode}\fi}
+
+\begin{document}
+
+\title{Shallow CKKS Bootstrapping in Practice}
+\subtitle{An Open-Source OpenFHE Implementation of SHIP, a Security Re-evaluation of its Sparse-Key Parameters, and a Comparison with Tuned OpenFHE Bootstrapping}
+
+\author{WooYoung Choi}
+\affiliation{%
+  \institution{Korea University}
+  \city{Seoul}
+  \country{Republic of Korea}}
+\email{jahagking369@korea.ac.kr}
+
+\begin{abstract}
+SHIP (Cheon, Hanrot, Kim and Stehl\'e, EUROCRYPT 2025) is a CKKS bootstrapping algorithm that replaces the top-level homomorphic DFT and the polynomial approximation of modular reduction by $h$ independent blind rotations and a product tree, using only $6$ levels for a sparse secret of Hamming weight $h=31$.
+We report, to the best of our knowledge, the first publicly available implementation of SHIP, as a feature of a fork of OpenFHE~1.4.2 with a \texttt{CryptoContext} API, key serialization, seed-compressed keys ($0.50\times$) and disk-backed keys.
+We run the four parameter sets of the paper with small, documented deviations: LL14 and HT15 are within $0.7$ bits of the published median precision, HT14 is $0.5$ bits below, and LL13 reaches $3.1$ bits ($4.3$ with secret-key encryption; paper: $4.45$) after moving one bit per product-tree prime to the auxiliary prime within the same budget.
+Three findings go beyond reproduction.
+(1)~At SHIP's small scales, the approximate ModDown of hybrid key switching floors instead of rounding; exact centered rounding improves LL14 by $0.5$ bits.
+(2)~For the sparse encapsulation key, the lattice-estimator version cited by the SHIP authors rates $(\log N,\log(Pq_0))=(13,55)$ at $2^{143.6}$ under its default attacks but at $2^{116.8}$ under the dual meet-in-the-middle hybrid, and $(14,100)$ at $2^{119.1}$. Shrinking the special prime fixes this but costs precision (LL14 drops to $8$ bits). We therefore decompose the encapsulation key into $8$-bit digits, which lets the special prime shrink to $17$ bits without precision loss: the new defaults reach $2^{135.6}$--$2^{155.7}$ under every attack for LL14, HT14 and HT15 and $2^{127.6}$ for LL13. An entropy-matched model of SHIP's windowed secret lowers these estimates by $8$--$15$ bits and leaves LL13 and LL14 below $2^{128}$, which identifies the windowed secret as the remaining weak point; widening LL14's window from $264$ to $396$ restores $2^{128}$ under that model at $28\%$ more latency.
+(3)~Against OpenFHE's bootstrapping tuned with the same sparse-secret encapsulation and an equal number of slots, SHIP LL14 is $1.6$--$2.0\times$ faster at $4$--$15$ threads on a $15$-core laptop CPU, but slower on one thread, $4$ bits less precise and not more memory-efficient.
+SHIP's practical advantage is multi-threaded latency at a four times smaller ring degree.
+\end{abstract}
+
+\keywords{Fully homomorphic encryption, CKKS, bootstrapping, OpenFHE, sparse-secret LWE, lattice estimator}
+
+\maketitle
+
+%=====================================================================
+\section{Introduction}
+%=====================================================================
+
+CKKS~\cite{CKKS17} offers high-throughput approximate arithmetic on encrypted vectors, but its bootstrapping~\cite{CHKKS18} is expensive in latency.
+The conventional procedure evaluates a homomorphic DFT at the top modulus, a polynomial approximation of the modular reduction, and an inverse DFT.
+In OpenFHE these steps consume $15$ to $21$ levels in the configurations we measured, which forces ring degree $N=2^{16}$ at 128-bit security for full-slot bootstrapping with good precision.
+
+SHIP~\cite{CHKS25} changes this balance.
+Writing the decryption equation $a s + b = m \bmod q_0$ coefficient-wise, it computes $\omega^{m_i}$ with $\omega=e^{2\pi\iota/q_0}$ ($\iota=\sqrt{-1}$) as a product of factors, one per nonzero coefficient of a sparse secret of Hamming weight $h$.
+Each factor is obtained by a \emph{blind rotation} of public phases by an encrypted index, and the $h+1$ terms are multiplied in a binary tree.
+Only the tree consumes levels, $\lceil\log_2(h+1)\rceil=5$ for $h=31$, plus one level for the slots-to-coefficients transform (S2C).
+With $6$ levels, the authors report the first CKKS-only full-slot bootstrapping at $N=2^{13}$, $215$\,ms on $32$ cores, and good multi-core scaling because the $h$ factors are independent.
+
+The original evaluation used an experimental implementation on the HEaaN library~\cite{HEaaN}.
+We are not aware of a public implementation, and several practical questions are open: how SHIP behaves inside a general-purpose library whose key-switching and scaling conventions were designed for $40$--$60$-bit primes; whether its sparse-key parameters hold under the attacks implemented in the lattice estimator; how large its keys are; and how it compares with a \emph{tuned} conventional bootstrapping on the same machine.
+
+\paragraph{Contributions}
+\begin{itemize}
+\item \textbf{Implementation (\S\ref{sec:impl}).} SHIP as an OpenFHE feature: column-plus-mux blind rotations with base-$4$ multiplexers and hoisting, the windowed sparse secret, masks multiplied at the auxiliary modulus (no masking level), sparse-secret encapsulation at modulus $q_0p'$, a one-level dense S2C, and role-specific primes. We add key serialization, seed compression and disk-backed keys, which make the $70$\,GiB HT15 key usable on a $48$\,GB machine.
+\item \textbf{Rounding in ModDown (\S\ref{sec:moddown}).} OpenFHE's approximate ModDown floors instead of rounding. We add exact centered rounding behind OpenFHE's \texttt{WITH\_REDUCED\_NOISE} flag; all $2{,}119$ OpenFHE unit tests pass.
+\item \textbf{Security re-evaluation and a fix (\S\ref{sec:security}, \S\ref{sec:digits}).} We evaluate the sparse-key bounds of the paper with the estimator version cited by its authors and with the current one, including the dual meet-in-the-middle hybrid that is not part of the default attack set. Two of the three published bounds fall to $2^{117}$--$2^{120}$ under that attack. A digit-decomposed encapsulation key removes the precision cost of a small special prime, so the bounds can be tightened by $13$--$55$ bits without precision loss. We also estimate the effect of the windowed secret structure.
+\item \textbf{Evaluation (\S\ref{sec:eval}).} We run LL13, LL14, HT14 and HT15, and compare against OpenFHE's \texttt{EvalBootstrap} with sparse-secret encapsulation~\cite{BTH22}, tuned over level budgets and slot counts, at $1$, $4$ and $15$ threads, with per-phase profiles, measured key sizes and the cost of noise flooding.
+\end{itemize}
+The code, unit tests, raw logs and estimator scripts are available\coderef.
+
+%=====================================================================
+\section{Background}
+\label{sec:background}
+%=====================================================================
+
+\paragraph{CKKS and RNS}
+We use the RNS variant of CKKS with ciphertext modulus $Q=\prod_{i=0}^{L} q_i$, auxiliary modulus $P$ for hybrid key switching with $d_{\mathrm{num}}$ digits, ring $\R=\Z[X]/(X^N+1)$ and $N/2$ complex slots.
+With OpenFHE's \texttt{FIXEDMANUAL} scaling, every rescaling prime is assumed equal to the scaling factor $\Delta=2^p$.
+Security of the dense (uniform ternary) secret follows the HE standard~\cite{HEStd18}, which bounds $\log_2(QP)$ for each $N$ ($218$, $438$, $881$ and $1747$ bits for $N=2^{13},\dots,2^{16}$).
+
+\paragraph{Sparse-secret encapsulation}
+Bootstrapping prefers a sparse secret at the bottom modulus, but sparse secrets weaken the RLWE instance.
+Bossuat et al.~\cite{BTH22} keep the dense secret everywhere and switch to a sparse secret only around ModRaise, with one switching key at a small modulus; only that modulus must satisfy the sparse-secret security bound.
+OpenFHE exposes this as \texttt{SPARSE\_ENCAPSULATED} ($h=32$, key modulus $q_0p_0$ with $p_0$ the first auxiliary prime).
+SHIP uses the same idea with $h=31$ and a dedicated special prime $p'$; the paper writes the modulus as $P\cdot q_0$, and we write $q_0p'$.
+
+\paragraph{SHIP}
+Let $(a,b)\in\R_{q_0}^2$ decrypt to $m$ under a sparse secret $s$ with nonzero coefficients $s_{j_1},\dots,s_{j_h}\in\{\pm1\}$; the coefficients encode messages $\mu_i\approx\gamma m_i/q_0$ with gap $\gamma=q_0/\Delta$.
+For every coefficient $i$,
+\[
+\omega^{m_i} = \omega^{b_i}\prod_{k=1}^{h}\omega^{\pm a_{i-j_k} s_{j_k}},
+\]
+with signs from the negacyclic reduction.
+SHIP evaluates this product for all slots at once~\cite[Alg.~1]{CHKS25}:
+(i)~the public phases $\omega^{\pm a}$ are encoded in four half-vectors;
+(ii)~for each nonzero $s_{j_k}$, encrypted masks that depend on $(j_k,s_{j_k})$ select and sign the right halves~\cite[Lemma~1]{CHKS25};
+(iii)~a blind rotation by the encrypted index $j_k$ aligns the factor;
+(iv)~a product tree multiplies the $h$ factors and the public term $\frac{\gamma}{4\pi\iota}\omega^{b}$;
+(v)~adding the complex conjugate yields $\frac{\gamma}{2\pi}\sin(2\pi\mu_i/\gamma)\approx\mu_i$ (scaled by $\Delta$) in the slots.
+The blind rotation combines a \emph{column} method, where the masks are pre-rotated for $\theta$ candidate offsets, and a \emph{mux} method, where encrypted digits in base $B$ drive $B$-to-$1$ multiplexed rotations~\cite[Def.~1, Alg.~3--5]{CHKS25}.
+To bound the rotation range, the secret has one nonzero coefficient per window: the $k$-th lies in $[kN/h-w,\,kN/h+w)$, so only $2w$ positions must be covered.
+The paper argues the security of this structure with May's meet-LWE estimate~\cite{May21}, requiring $(4w)^{0.4h}\ge 2^{115}$~\cite[\S5.1]{CHKS25}.
+Masks are multiplied at modulus $QP$ with scale $P$ and removed by the ModDown of key switching, so masking consumes no level~\cite[\S4.1, \S4.4]{CHKS25}.
+A dense S2C at the bottom modulus moves the slots into coefficients with one level~\cite[\S3.2]{CHKS25}.
+The paper defines four parameter sets~\cite[Table~2]{CHKS25}: LL13 and LL14 (low latency, one level left after bootstrapping) and HT14 and HT15 (high throughput, nine levels).
+
+%=====================================================================
+\section{Implementation in OpenFHE}
+\label{sec:impl}
+%=====================================================================
+
+The implementation is a new module \texttt{ckksrns-ship} (about $1{,}400$ lines of C++) in a fork of OpenFHE~1.4.2, plus five methods on \texttt{CryptoContext}; it is not part of upstream OpenFHE.
+\begin{verbatim}
+auto spec = SHIPContextSpec::LL14();
+auto cc   = GenSHIPCryptoContext(spec);
+auto kp   = cc->KeyGen();
+cc->EvalMultKeyGen(kp.secretKey);
+auto prm  = SHIPParams::Recommended(spec);
+cc->EvalSHIPBootstrapKeyGen(kp.secretKey, prm);
+auto out  = cc->EvalSHIPBootstrap(ct);
+\end{verbatim}
+\texttt{GenSHIPCryptoContext} builds the modulus chain and throws if $\log_2(QP)$ exceeds the HE-standard bound.
+The input is a fully packed, rescaled ciphertext with at least two limbs; the output has the full chain minus the five product-tree levels.
+
+\subsection{Data flow}
+\texttt{EvalSHIPBootstrap} (Algorithm~\ref{alg:ship}) drops the input to two limbs, applies the dense S2C with a baby-step giant-step diagonal method (one level), switches to the sparse secret at modulus $q_0p'$, and runs the half bootstrap for real messages (twice for complex messages).
+The $h=31$ factors are computed in an OpenMP parallel loop.
+For each factor, the four public phase polynomials are lifted from $q_0$ to all limbs of $QP$, rotated to the $\theta$ column offsets, multiplied by the column keys $\mathrm{Enc}_{QP}(P\cdot\text{mask})$, summed, and reduced by one ModDown.
+The mux part has $\lceil\log_B\lceil 2w/\theta\rceil\rceil$ steps (three in all presets), each a $B$-to-$1$ mux-rotate whose $B$ branches share one gadget decomposition and one ModDown.
+The product tree multiplies the $32$ terms; the public term enters as a trivial ciphertext, so evaluation needs no public key.
+
+\begin{algorithm}[t]
+\caption{\texttt{EvalSHIPBootstrap} for real messages}
+\label{alg:ship}
+\small
+\begin{algorithmic}[1]
+\Require fully packed ciphertext $ct$ with $\ge 2$ limbs; factor keys $C_k$, $M_k$ ($1\le k\le h$); input bound $K$; tree scale correction $\kappa$ (\S\ref{sec:primes})
+\State $ct \gets$ \textsc{LevelReduce}$(ct)$ to two limbs
+\State $ct \gets$ \textsc{S2C}$(ct)$ \Comment{one level; now modulo $q_0$}
+\State $(a,b) \gets$ \textsc{Encapsulate}$(ct)$ \Comment{dense $\to$ sparse at $q_0p'$}
+\State $\phi_{1..4} \gets$ halves of $\omega^{\pm a}$, encoded at $q_0$ and lifted to $QP$
+\State $T_0 \gets$ trivial ciphertext of $\frac{\gamma K}{4\pi\iota\kappa}\,\omega^{b}$
+\ForAll{$k=1,\dots,h$ \textbf{in parallel}}
+  \State $c \gets \sum_{t<\theta}\sum_{u=1}^{4} \textsc{Rot}_{o_k+t}(\phi_u)\cdot C_{k,t,u}$ \Comment{at $QP$}
+  \State $c \gets \textsc{ModDown}_P(c)$ \Comment{masking uses no level}
+  \For{each of the $\lceil\log_B\lceil 2w/\theta\rceil\rceil$ mux steps $\ell$}
+    \State $c \gets \textsc{MuxRot}_B(c, M_{k,\ell})$ \Comment{shared decomposition}
+  \EndFor
+  \State $T_k \gets c$
+\EndFor
+\State $R \gets \textsc{ProductTree}(T_0,\dots,T_h)$ \Comment{$\lceil\log_2(h+1)\rceil$ levels}
+\State \Return $R + \textsc{Conj}(R)$
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Role-specific primes and exact output scale}
+\label{sec:primes}
+The paper assigns different prime sizes to the base prime, the S2C prime, the user's primes, the product-tree primes and the auxiliary primes~\cite[Table~2]{CHKS25}.
+We choose for each role the NTT-friendly prime closest to the target size.
+Two corrections make this work under \texttt{FIXEDMANUAL}:
+\begin{itemize}
+\item The product tree is computed at scale $2^{b}$ with $b>p$, while downstream code expects $2^{p}$. We set the last tree prime to $2b-p$ bits so that the root returns to scale $2^p$.
+\item Small NTT-friendly primes deviate from $2^b$ by a few percent, and the deviation compounds through five tree levels. All leaves enter at the same level with known scale, so the true root scale $\kappa\cdot 2^p$ is deterministic; we simulate the pairing once and fold $1/\kappa$ into the public term. Likewise, the S2C diagonals are multiplied by $q/\Delta$ for the exact prime $q$ they are rescaled by.
+\end{itemize}
+OpenFHE generates $60$-bit auxiliary primes on 64-bit builds (compile-time constant \texttt{AUXMODSIZE}); to fit LL13's $218$-bit budget, the SHIP context regenerates the CRT tables with the requested auxiliary prime size.
+Table~\ref{tab:keys} lists the resulting parameters and their deviations from the paper.
+
+\begin{table}[t]
+\caption{Parameter sets as implemented; values in parentheses are the paper's where different. Prime sizes in bits; ``boot'' are the product-tree primes (the largest is the $2b-p$ prime). Key sizes: serialized full / seed-compressed for LL14 (measured), otherwise predicted full size.}
+\label{tab:keys}
+\small
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lrrrr}
+\toprule
+ & LL13 & LL14 & HT14 & HT15 \\
+\midrule
+$N$ & $2^{13}$ & $2^{14}$ & $2^{14}$ & $2^{15}$ \\
+$\log_2(QP)$ & 218 & 437 & 434 (438) & 827 (881) \\
+HE-std bound & 218 & 438 & 438 & 881 \\
+$d_{\mathrm{num}}$ & 8 & 4 & 8 & 6 (4) \\
+base, S2C & 25, 20 & 48, 37 & 28, 23 & 51 (50), 39 \\
+user levels & 1$\times$21 (20) & 1$\times$37 & 9$\times$23--24 & 9$\times$39--40 \\
+boot primes & 23--26 (25) & 42--48 (43) & 24--25 (25) & 46--54 (46) \\
+$P$ & 34 (28) & 2$\times$50 & 1$\times$55 (2$\times$29) & 3$\times$50 (4$\times$53) \\
+$w$, $\theta$, $B$ & 175, 6, 4 & 264, 9, 4 & 264, 9, 4 & 528, 17, 4 \\
+$\lgqp$ & 42 (55) & 65 (100) & 45 (100) & 68 (105) \\
+key (GiB) & 8.0 & 10.2 / 5.1 & 31.5 & 69.6 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Keys}
+\label{sec:keys}
+A SHIP key holds, per nonzero coefficient, $4\theta$ column ciphertexts and $3B\,d_{\mathrm{num}}$ mux key components at modulus $QP$, plus S2C rotation keys, the conjugation key and the encapsulation key.
+Three measures keep it manageable:
+\begin{itemize}
+\item \textbf{Level truncation.} S2C and conjugation keys are used at one known level, so their digits and limbs are restricted to that level.
+\item \textbf{Seed compression.} Every uniform component $a$ is derived from a per-key random seed (BLAKE2) and an identifier; the compact serialization stores only the $b$ components. The measured LL14 key is $10.18$\,GiB full and $5.09$\,GiB compact. The seed determines only public components; both sides must use the same PRNG.
+\item \textbf{Disk-backed factor keys.} With a directory argument, the factor keys are written to one file per factor and streamed during bootstrapping; only the S2C, conjugation and encapsulation keys stay in memory.
+\end{itemize}
+For comparison, OpenFHE's bootstrapping keys at $N=2^{16}$ (rotation, conjugation and encapsulation keys, level budget $(2,2)$) serialize to $11.1$\,GiB for full packing and $9.1$\,GiB for $8{,}192$ slots, without seed compression.
+
+\subsection{Digit-decomposed encapsulation key}
+\label{sec:digits}
+The dense-to-sparse switch multiplies the $q_0$ component $a$ of the ciphertext by a key $\mathrm{Enc}_{s'}(p'\cdot s)$ modulo $q_0p'$ and divides by $p'$, so its noise is about $\|a\|\cdot\|e\|\sqrt{N}/p'\approx (q_0/p')\,\sigma\sqrt{N}$.
+With $p'\ge q_0$ this is negligible, which is why the paper's bounds put $\lgqp$ at roughly twice $\log_2 q_0$; with $p'<q_0$ it grows by one bit per bit removed from $p'$ (LL14: $16.2$ bits at $\lgqp=88$, $12.1$ at $80$, $8.1$ at $76$; Table~\ref{tab:sparse}).
+We apply the standard gadget decomposition to this one key: $a$ is split into $k=\lceil\log_2 q_0/d\rceil$ signed digits of $d$ bits, and the key holds $\mathrm{Enc}_{s'}(p'\,2^{jd}s)$ for $j<k$.
+The noise becomes about $k\,2^{d-1}\sigma\sqrt{N}/p'$, independent of $q_0$, at the cost of $k$ instead of one ring products at the bottom modulus and $k$ RLWE samples under the sparse secret; the estimator's default of unlimited samples covers this, and restricting it to the $7n$ samples of LL13's decomposed key gives the same $2^{127.6}$.
+With $d=8$ and the smallest NTT-friendly $p'$ ($17$ bits), LL14 keeps $16.2$--$16.5$ bits at $\lgqp=65$ ($16.0$--$16.4$ bits with $d=12$ or $16$ at $76$), against $8.1$ bits without decomposition.
+The presets now use $d=8$ and $p'$ of $17$ bits, i.e.\ $\lgqp=42$, $65$, $45$ and $68$ for LL13, LL14, HT14 and HT15.
+The additional key material is $k$ polynomial pairs modulo $q_0p'$ (at most $7$), i.e.\ a few hundred kilobytes.
+
+\subsection{Input range and testing}
+SHIP computes $\frac{\gamma}{2\pi}\sin(2\pi\mu/\gamma)$, which is close to $\mu$ only for $|\mu|\ll\gamma$.
+A parameter \texttt{messageBound}~$K$ divides the message by $K$ inside the S2C diagonals and multiplies it back through the public term, at no level cost and about $\log_2 K$ bits of precision.
+On inputs in $[-64,64]$, $K=1$ gives a maximum error of $1.62$ and $K=64$ gives $4.0\times10^{-4}$.
+Nine unit tests cover real and complex messages, windowed and unrestricted secrets, base-$2$ and base-$4$ mux, role-specific primes, inputs at higher levels, invalid inputs and keys, compact serialization round trips, disk-backed keys, the input range, and the HE-standard check of the presets.
+A client--server example generates and serializes the key on one side and bootstraps, squares and bootstraps again on the other.
+
+%=====================================================================
+\section{Exact Rounding in ModDown}
+\label{sec:moddown}
+%=====================================================================
+
+Hybrid key switching ends with $\mathrm{ModDown}$: given $x$ over $QP$, compute $\lfloor x/P\rceil$ over $Q$.
+OpenFHE's \texttt{ApproxModDown} obtains $[x]_P$ by a fast basis conversion, $\tilde r=\sum_j y_j\hat P_j$ with $\hat P_j=P/p_j$ and $y_j=[x\,\hat P_j^{-1}]_{p_j}$, and returns $(x-\tilde r)/P$.
+Two effects make this a biased estimate of $x/P$:
+(1)~$[x]_P\in[0,P)$, so the division is a floor, with mean error $1/2$; and
+(2)~$\tilde r = [x]_P + \alpha P$ with $\alpha\in[0,k)$ for $k$ auxiliary primes, an extra integer error.
+In key switching the error is multiplied by the secret.
+A constant error $c$ per coefficient multiplied by a dense ternary secret gives coefficients that are signed partial sums of $c\,s$, of standard deviation about $c\sqrt{2N/3}$, i.e.\ about $37$ for $c=1/2$ and $N=2^{13}$.
+At scales of $2^{40}$ or more this is negligible.
+SHIP, however, runs hundreds of key switches at scales of $2^{20}$--$2^{24}$ (LL13); in our diagnostics every factor carried an error of $0.02$--$0.25$ in slot~$0$.
+
+With \texttt{WITH\_REDUCED\_NOISE} and plaintext modulus $t=0$ (CKKS, BFV), we compute the centered remainder exactly,
+\[
+r=\sum_j y_j \hat P_j - \Big\lfloor \sum_j \tfrac{y_j}{p_j} \Big\rceil P,
+\]
+with a $128$-bit accumulator and Barrett reduction, so that $(x-r)/P=\lfloor x/P\rceil$.
+BGV ($t>0$) and builds without the flag are unchanged, and all OpenFHE unit tests (core $156$, binfhe $78$, pke $1{,}885$ including the SHIP tests) pass with the flag enabled.
+
+\begin{table}[t]
+\caption{SHIP precision (bits) or maximum error before and after the ModDown change. Only the LL14 row isolates the rounding change; the LL13 rows compare a build without \texttt{WITH\_REDUCED\_NOISE} with a build that has both the flag and exact rounding.}
+\label{tab:moddown}
+\small
+\begin{tabular}{p{3.1cm}p{1.9cm}p{2.1cm}}
+\toprule
+Setting (uniform primes) & before & after \\
+\midrule
+LL13, 22-bit, $P$ 28-bit & no flag: error 1.5--5 & flag + exact: 1.3--1.6 \\
+LL13, 22-bit, $P$ 60-bit & no flag: error 0.55--2.5 & flag + exact: 3.3 \\
+LL14, 40-bit & flag: 13.8--13.9 & flag + exact: 14.4 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:moddown} summarizes the effect.
+The isolated gain for LL14 is $0.5$--$0.6$ bits.
+For LL13 we did not keep a build with the flag but without exact rounding, so the LL13 rows bound the combined effect of the flag and the change.
+We have not measured other CKKS workloads at small scales.
+
+%=====================================================================
+\section{Security Re-evaluation}
+\label{sec:security}
+%=====================================================================
+
+SHIP involves three secrets: the dense ternary secret of all evaluation keys at modulus $QP$, the sparse secret of the encapsulation key at modulus $q_0p'$, and the windowed position structure of that sparse secret.
+We used the lattice estimator~\cite{APS15,estimator} at commit \texttt{14a3625} (2024-09-30), which is the version cited by the SHIP authors, and at commit \texttt{d8c00b48} (2026-08-19), both with SageMath~10.5, the default MATZOV reduction cost model~\cite{MATZOV22}, error $\sigma=3.19$ and an unlimited number of samples (restricting to $m=n$ did not change the result we tested).
+The sparse secret is modelled as $16$ coefficients $+1$ and $15$ coefficients $-1$.
+Costs are $\log_2$ of \texttt{rop}, which ignores memory; the meet-in-the-middle attacks need about $2^{77}$ memory at $(13,55)$.
+
+\paragraph{Criterion}
+For dense keys we follow the HE standard, as the paper does.
+The current estimator rates the HE-standard boundary itself at $2^{125.9}$--$2^{126.1}$, and our dense keys are at or above it (Table~\ref{tab:dense}).
+For the sparse key we require $2^{128}$ under every attack and both estimator versions; a point between $2^{126}$ and $2^{128}$ is therefore as secure as the standard dense parameters by the same tool, but does not meet our stricter criterion.
+
+\begin{table}[t]
+\caption{Dense keys: $\log_2$ attack cost (current estimator).}
+\label{tab:dense}
+\small
+\begin{tabular}{lrrrr}
+\toprule
+Set & $\log_2(QP)$ & uSVP & dual hybrid & HE-std boundary \\
+\midrule
+LL13 & 218 & 126.0 & 126.5 & 218 $\to$ 126.0 \\
+LL14 & 437 & 126.2 & 126.9 & 438 $\to$ 125.9 \\
+HT14 & 434 & 127.3 & 128.1 & 438 $\to$ 125.9 \\
+HT15 & 827 & 134.7 & 135.7 & 881 $\to$ 126.1 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Sparse key}
+The paper states that $(\log N,\log(Pq_0))=(13,55)$, $(14,100)$ and $(15,105)$ give 128-bit security for $h=31$~\cite[\S5.2]{CHKS25}.
+Table~\ref{tab:sparse} reports the two hybrid attacks that dominate at these small moduli; uSVP does not apply and the plain dual hybrid is more expensive.
+With the cited version, the default attacks of \texttt{LWE.estimate} (which include the primal hybrid but not the dual meet-in-the-middle hybrid) give $2^{143.6}$ at $(13,55)$, consistent with the paper's claim, but the dual meet-in-the-middle hybrid gives $2^{116.8}$.
+At $(14,100)$ the same attack gives $2^{119.1}$.
+With the current version, the dual attack gives $2^{117.7}$ and $2^{119.9}$, and the primal hybrid itself drops to $2^{121.4}$ and $2^{126.2}$.
+The old version's primal hybrid raised an internal error at several of the smaller moduli, which the current version no longer does.
+Hybrid attacks on sparse secrets have been revised repeatedly~\cite{SC19,CP19,SecGuide24}, and recent GPU implementations of the primal hybrid support the estimator's predictions in practice~\cite{PV25}.
+
+\begin{table}[t]
+\caption{Sparse encapsulation key ($h=31$): $\log_2$ cost of the primal hybrid (\texttt{bdd\_mitm\_hybrid}) and the dual meet-in-the-middle hybrid (\texttt{dual\_mitm\_hybrid}) with the estimator version cited by the SHIP paper and the current one. ``err'': the old version raised an internal error; ``--'': not run. ``bits'': measured precision of LL13 or LL14 with that modulus and no digit decomposition (\S\ref{sec:digits}). Defaults with digit decomposition: Table~\ref{tab:defaults}.}
+\label{tab:sparse}
+\small
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{rrrrrrrl}
+\toprule
+ & & \multicolumn{2}{c}{\texttt{14a3625}} & \multicolumn{2}{c}{\texttt{d8c00b48}} & & \\
+\cmidrule(lr){3-4}\cmidrule(lr){5-6}
+$N$ & $\lgqp$ & primal & dual & primal & dual & bits & note \\
+\midrule
+$2^{13}$ & 55 & 143.6 & 116.8 & 121.4 & 117.7 & -- & paper \\
+$2^{13}$ & 42 & err & 126.8 & 129.8 & 127.6 & 1.9--2.5 & \\
+\midrule
+$2^{14}$ & 100 & 156.1 & 119.1 & 126.2 & 119.9 & 15.9--16.6 & paper \\
+$2^{14}$ & 88 & err & 123.5 & 130.2 & 125.2 & 16.0--16.5 & \\
+$2^{14}$ & 80 & -- & 129.7 & 133.1 & 127.3 & 12.0--12.2 & \\
+$2^{14}$ & 76 & -- & 128.1 & 134.6 & 129.0 & 8.0--8.3 & \\
+\midrule
+$2^{15}$ & 105 & err & 140.8 & 148.7 & 141.3 & -- & paper \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Precision cost and new defaults}
+Without further changes, no choice is free (Table~\ref{tab:sparse}).
+For $N=2^{14}$, the dual meet-in-the-middle hybrid reaches $2^{128}$ in both versions only at $\lgqp=76$, where LL14's precision falls to $8$ bits.
+For $N=2^{13}$, LL13's $25$-bit $q_0$ and the smallest NTT-friendly $p'$ give $\lgqp\ge 42$, where the dual attack gives $2^{126.8}$--$2^{127.6}$.
+The digit-decomposed key of \S\ref{sec:digits} removes the precision cost, so the presets use the smallest $p'$.
+Table~\ref{tab:defaults} gives the resulting estimates: LL14, HT14 and HT15 are above $2^{135}$ under every attack in the generic model, and LL13 stays $0.4$ bits below $2^{128}$ under the dual attack because $q_0$ alone is $25$ bits.
+
+\begin{table}[t]
+\caption{Library defaults with $8$-bit digit decomposition and $17$-bit $p'$ (current estimator): generic $h=31$ secret and an entropy-matched model of the windowed secret. Precision: measured with these defaults (4 threads; HT sets with disk-backed keys).}
+\label{tab:defaults}
+\small
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lrrrrrr}
+\toprule
+ & & \multicolumn{2}{c}{generic, $h=31$} & \multicolumn{2}{c}{windowed (entropy)} & \\
+\cmidrule(lr){3-4}\cmidrule(lr){5-6}
+Set & $\lgqp$ & primal & dual & primal & dual & bits \\
+\midrule
+LL13 & 42 & 129.8 & 127.6 & 122.0 & 119.2 & 2.7--3.2 \\
+LL14 & 65 & 139.4 & 135.6 & 127.9 & 122.5 & 15.9--16.4 \\
+HT14 & 45 & 150.3 & 147.4 & 137.2 & 133.6 & 4.0--4.2 \\
+HT15 & 68 & 161.3 & 155.7 & 147.0 & 140.7 & 18.3--18.4 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Windowed positions}
+The estimator models a generic sparse ternary secret, whereas SHIP's secret has one nonzero coefficient per window.
+This removes entropy: $\log_2\big(\binom{N}{h}2^h\big)$ versus $h\log_2(4w)$, i.e.\ $321.3$ versus $293.0$ bits for LL13 and $352.3$ versus $311.4$ bits for LL14 and HT14.
+Hybrid attacks that guess part of the secret can exploit this structure, so the costs in Table~\ref{tab:sparse} are optimistic for SHIP's actual secret.
+As a heuristic, we replaced the secret by a generic sparse ternary secret with the same entropy ($h=28$ for $N=2^{13}$, $h=27$ for $N=2^{14}$ and $2^{15}$) in the current estimator.
+This lowers the estimates by $8$--$15$ bits (Table~\ref{tab:defaults}); for the paper's own bounds it gives $2^{110.8}$ $(13,55)$, $2^{110.6}$ $(14,100)$ and $2^{128.6}$ $(15,105)$ under the dual meet-in-the-middle hybrid.
+Under this heuristic, HT14 and HT15 remain above $2^{133}$, but LL13 ($2^{119.2}$) and LL14 ($2^{122.5}$) do not reach $2^{128}$; for LL14 the remaining lever is a smaller $q_0$, which shrinks the gap $\gamma$ and costs precision (\S\ref{sec:eval}).
+An entropy match is not a proof in either direction: an attacker may exploit the window structure more efficiently than the estimator's generic guessing, or less.
+The paper's own criterion $(4w)^{0.4h}\ge 2^{115}$~\cite{May21,CHKS25} gives $2^{117.2}$ for LL13 ($2.2$ bits of margin), $2^{124.6}$ for LL14 and HT14 and $2^{137.0}$ for HT15.
+Together, these results make the windowed secret, not the encapsulation modulus, the binding security constraint of the low-latency sets; a dedicated attack analysis remains future work.
+
+\paragraph{Hardening the windowed secret}
+The window width $w$ trades blind-rotation cost for entropy: the number of mux steps is $\lceil\log_4\lceil 2w/\theta\rceil\rceil$, and the secret's entropy is $h\log_2(4w)$.
+Table~\ref{tab:window} measures this trade-off for LL14's primes and $\lgqp=65$ (digit-decomposed encapsulation).
+At $w=396$ the entropy-matched model reaches $2^{128.3}$ under the dual attack for $28\%$ more latency and $20\%$ more key material; at $w=528$ it reaches $2^{133.0}$ for $47\%$ more latency.
+Precision is unchanged.
+For LL13, $w=264$ gives only $2^{124.8}$, because $\lgqp=42$ already limits the generic model to $2^{127.6}$.
+We keep the paper's $w$ as the default and document $w=396$ for LL14 as the hardened choice.
+
+\begin{table}[t]
+\caption{Window width for LL14's primes ($\lgqp=65$, 8-bit digits; four threads, 5 runs). Security: entropy-matched model, current estimator.}
+\label{tab:window}
+\small
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{rrrrrrr}
+\toprule
+$w$ & mux steps & entropy & $h_{\mathrm{eq}}$ & primal / dual & latency & key \\
+\midrule
+264 & 3 & 311.4 & 27 & 127.9 / 122.5 & 1.59\,s & 12.2\,GiB \\
+396 & 4 & 329.5 & 29 & 133.7 / 128.3 & 2.03\,s & 14.6\,GiB \\
+528 & 4 & 342.4 & 30 & 136.6 / 133.0 & 2.34\,s & 14.6\,GiB \\
+792 & 4 & 360.5 & $\ge 31$ & 139.4 / 135.6 & 2.45\,s & 14.6\,GiB \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%=====================================================================
+\section{Evaluation}
+\label{sec:eval}
+%=====================================================================
+
+\paragraph{Setup}
+Apple M5 Pro laptop ($15$ cores, mixed performance and efficiency cores, on mains power), $48$\,GB RAM, macOS (arm64), AppleClang, OpenFHE~1.4.2 fork with \texttt{NATIVE\_SIZE=64}, \texttt{WITH\_REDUCED\_NOISE=ON} and OpenMP (Homebrew libomp, no thread pinning).
+Inputs are uniform real vectors in $[-1,1]$ encrypted with the public key; precision is $\log_2(1/\varepsilon)$ with $\varepsilon$ the maximum real error over all slots, as in~\cite{CHKS25}.
+Latency excludes key generation.
+OpenFHE caches its thread count at start-up, so every thread count runs in a separate process with \texttt{OMP\_NUM\_THREADS} set.
+Unless stated otherwise, measurements were taken without other heavy workloads; latencies are medians of $5$ runs (SHIP) or $3$ runs (OpenFHE), and precisions are given as ranges or medians over all runs.
+Throughput follows~\cite[Eq.~(9)]{CHKS25}: slots $\times$ levels after bootstrapping $\times$ worst precision / median latency.
+The latency measurements were taken before the digit-decomposed encapsulation became the default; the encapsulation step takes about $1$\,ms without and $3$--$5$\,ms with decomposition, so the tables are unaffected.
+
+\subsection{Parameter sets of the paper}
+Table~\ref{tab:repro} compares LL13 and LL14 with the paper.
+Our median precision is $16.2$ bits for LL14 (paper: $16.9$, median of $100$ runs) and $3.1$ bits for LL13 (paper: $4.45$); the LL13 column uses the re-balanced primes described below.
+Single-thread latencies ($3.10$\,s and $5.28$\,s) are close to the published single-core figures ($3.02$\,s and $4.91$\,s), but the CPUs, instruction sets and libraries differ, so we treat this agreement as indicative only.
+
+\begin{table}[t]
+\caption{Low-latency sets. Precision: median [min--max] over 15 runs. Latency: median [min--max] of 5 runs. Paper: HEaaN on AMD EPYC 7473X.}
+\label{tab:repro}
+\small
+\begin{tabular}{lll}
+\toprule
+ & LL13 & LL14 \\
+\midrule
+precision (ours) & 3.1 [2.7--3.2] & 16.2 [16.0--16.5] \\
+precision (paper) & 4.45 & 16.9 \\
+1 thread (ours) & 3.10\,s [3.09--3.61] & 5.28\,s [5.24--5.74] \\
+1 core (paper) & 3.02\,s & 4.91\,s \\
+4 threads (ours) & 0.90\,s [0.87--0.92] & 1.45\,s [1.41--1.48] \\
+4 cores (paper) & 0.80\,s & 1.29\,s \\
+15 threads (ours) & 0.61\,s [0.60--0.62] & 0.83\,s [0.81--0.88] \\
+32 cores (paper) & 215\,ms & 333\,ms \\
+key generation & 17--18\,s & 24--26\,s \\
+max RSS & 8.6\,GiB & 13.8\,GiB \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{The LL13 gap}
+With the paper's prime sizes (tree primes $24$ bits, $P$ $28$ bits), LL13 reached only $2.3$ bits, and the error was not caused by encryption noise: measured against the decryption of the input ciphertext, or with secret-key encryption (input error $8\times10^{-4}$ instead of $0.10$--$0.14$), it stayed at $2.4$ bits.
+To locate the error, we varied one parameter at a time in an $N=2^{13}$ context outside the 128-bit budget (secret-key encryption).
+Raising $p'$ changed little, whereas raising the auxiliary prime $P$ from $28$ to $40$--$60$ bits gave $3.2$--$3.6$ bits, and with the digit-decomposed encapsulation and a $60$-bit $P$, increasing the scale at a fixed gap $\gamma=2^5$ gave $4.5$--$5.2$, $6.3$--$6.7$ and $7.0$--$7.1$ bits for $\Delta=2^{20}$, $2^{22}$ and $2^{24}$, approaching the $7.3$-bit limit of the sine approximation.
+LL13 is therefore limited by key-switching noise at the small auxiliary prime, not by the algorithm.
+Within the same $218$-bit budget, moving one bit from each of the four product-tree primes to $P$ (tree primes $23$ bits, $P$ $34$ bits) raises LL13 from $2.5$--$2.7$ to $3.9$--$4.5$ bits with secret-key encryption (median $4.3$, paper $4.45$) and to $2.7$--$3.2$ bits with public-key encryption, where the input's encryption noise now dominates.
+We adopted these sizes for the LL13 preset (Tables~\ref{tab:keys} and~\ref{tab:repro}); the same change does not help LL14 ($15.2$ bits with $P$ $2\times 52$ and $41$-bit tree primes).
+A larger $q_0$ does not help either: with the scale fixed at $2^{20}$, every extra bit of $q_0$ cost about one bit of precision, because the output $\frac{\gamma}{2\pi}\sin(2\pi\mu/\gamma)$ amplifies the relative error of the product tree by the gap $\gamma=q_0/\Delta$.
+
+\paragraph{High-throughput sets}
+HT14 and HT15 do not fit in memory, so they ran with disk-backed factor keys (internal SSD) at four threads, two runs each, with the same bootstrapping code and the same $\lgqp$ as the defaults, while another application was running.
+Their latencies are dominated by reading tens of gigabytes of keys and are not comparable with the paper.
+HT15 reaches $18.3$--$18.4$ bits (paper: $18.1$) with nine levels left, in $49$--$51$\,s; key generation takes $354$\,s and the maximum RSS is $27.3$\,GiB, of which $8.6$\,GiB are resident keys.
+HT14 reaches $4.0$ bits (paper: $4.55$) with nine levels, in $8$--$19$\,s, maximum RSS $14.4$\,GiB.
+Precision and level counts match the paper; their speed needs a machine with enough memory.
+
+\paragraph{Where the time goes}
+For LL14, the factor loop takes $70\%$ of the latency on one thread ($3.72$\,s of $5.33$\,s), the S2C $23\%$ ($1.22$\,s) and the product tree $7\%$ ($0.39$\,s); encapsulation and conjugation are negligible.
+From $1$ to $15$ threads, the factor loop speeds up $6.3\times$, the S2C $5.9\times$ and the tree $4.8\times$.
+With $31$ factors on $15$ threads the factor loop runs in three waves on a mix of performance and efficiency cores, which limits the speed-up.
+Over $1$, $2$, $4$, $8$, $12$ and $15$ threads, LL14 takes $5.28$, $3.18$, $1.45$, $1.11$, $0.89$ and $0.83$\,s, while the best equal-slot OpenFHE configuration takes $4.69$, $3.31$, $2.26$, $1.88$, $1.85$ and $1.67$\,s (Figure~\ref{fig:scaling}).
+Fitting Amdahl's law gives a serial fraction of $0.09$ for SHIP and $0.33$ for OpenFHE; on $32$ identical cores this would predict about $0.64$\,s and $1.63$\,s, but our cores are heterogeneous and we could not test a many-core server.
+
+\subsection{Comparison with tuned OpenFHE bootstrapping}
+
+\paragraph{Baseline choice}
+A fair baseline must use the same security level, keep one level, and use current techniques.
+With OpenFHE's default uniform ternary secret, \texttt{EvalBootstrap} needs $19$--$21$ levels; at $N=2^{15}$ decryption fails because of the approximation error, and at $N=2^{16}$ we obtained only $5.3$--$10.6$ bits.
+We therefore use \texttt{SPARSE\_ENCAPSULATED}~\cite{BTH22}, the same encapsulation idea as SHIP; its sparse key is at $2^{149.7}$ ($N=2^{15}$) and $2^{172.1}$ ($N=2^{16}$) by the primal hybrid, i.e.\ more conservative than SHIP's.
+OpenFHE does not support this mode together with composite scaling.
+We tuned the level budget ($2$, $3$, $4$) at $N=2^{16}$ with OpenFHE's recommended $59/60$-bit scale, and measured both full packing ($32{,}768$ slots) and sparse packing with $8{,}192$ slots, the slot count of LL14.
+For the best $8{,}192$-slot configuration we also varied $d_{\mathrm{num}}\in\{2,3,4,6\}$ and the scale ($50$, $55$, $59$ bits): at four threads the latency stayed between $2.20$ and $2.71$\,s, the default $d_{\mathrm{num}}$ and $59$-bit scale being within $3\%$ of the best, while a $50$-bit scale cost $8$ bits of precision.
+At $N=2^{15}$, OpenFHE requires $\log_2(q_0/\Delta)\le 7$ and the $881$-bit budget then limits the scale to $45$ bits, which gives about $7$ bits of precision; HEaaN reaches $16.7$ bits at $N=2^{15}$ with a different parameter set~\cite[Table~3]{CHKS25}, so this limitation is specific to OpenFHE's configuration.
+We did not evaluate meta-bootstrapping~\cite{BCCKK22}, which trades latency for precision, or SPRU~\cite{SPRU25}, which targets ciphertexts with few slots.
+
+\begin{table*}[t]
+\caption{SHIP versus OpenFHE \texttt{EvalBootstrap} with sparse-secret encapsulation (128-bit, one level after bootstrapping). Latency: median of 5 (SHIP) or 3 (OpenFHE) runs. Throughput: slots $\times$ levels $\times$ worst precision / latency, in thousands. Key: serialized bootstrapping keys (``c'': seed-compressed). Key generation includes OpenFHE's bootstrapping setup.}
+\label{tab:compare}
+\small
+\begin{tabular}{llrrrrrrrrrr}
+\toprule
+ & & & & \multicolumn{3}{c}{latency (s)} & \multicolumn{2}{c}{throughput ($10^3$)} & keygen & max RSS & key \\
+\cmidrule(lr){5-7}\cmidrule(lr){8-9}
+Method & level budget & $N$ & slots & 1 thr & 4 thr & 15 thr & 1 thr & 15 thr & 1 thr (s) & (GiB) & (GiB) \\
+\midrule
+SHIP LL13 (2.7--3.2 bits) & -- & $2^{13}$ & 4{,}096 & 3.10 & 0.90 & 0.61 & 4 & 18 & 18 & 8.6 & 8.0 \\
+SHIP LL14 (16.0--16.5 bits) & -- & $2^{14}$ & 8{,}192 & 5.28 & \textbf{1.45} & \textbf{0.83} & 25 & 158 & 26 & 13.8 & 10.2 / 5.1c \\
+\midrule
+OpenFHE (19.9--20.1 bits) & (2,2) & $2^{16}$ & 8{,}192 & 6.20 & 2.82 & 2.13 & 26 & 77 & 36 & 16.3 & 9.1 \\
+OpenFHE (20.0--20.1 bits) & (3,3) & $2^{16}$ & 8{,}192 & \textbf{4.69} & 2.26 & 1.67 & 35 & 98 & 23 & 9.6 & -- \\
+OpenFHE (18.3--18.7 bits) & (2,2) & $2^{16}$ & 32{,}768 & 10.48 & 5.00 & 3.48 & 58 & 173 & 52 & 25.3 & 11.1 \\
+OpenFHE (18.6--18.7 bits) & (4,4) & $2^{16}$ & 32{,}768 & 6.21 & 2.87 & 1.74 & \textbf{98} & \textbf{351} & 22 & 9.4 & -- \\
+OpenFHE (6.3--6.8 bits) & (3,3) & $2^{15}$ & 8{,}192 & 3.94 & 1.67 & 1.51 & 14 & 34 & 48 & 16.2 & -- \\
+OpenFHE (6.7--7.2 bits) & (3,3) & $2^{15}$ & 16{,}384 & 4.89 & 2.44 & 1.85 & 23 & 61 & 50 & 17.3 & -- \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=\columnwidth, height=5.2cm,
+  xmode=log, ymode=log, log basis x=2,
+  xtick={1,2,4,8,15}, xticklabels={1,2,4,8,15},
+  xlabel={threads}, ylabel={latency (s)},
+  legend style={font=\scriptsize, at={(0.5,-0.32)}, anchor=north, draw=none},
+  legend columns=2,
+  grid=major, grid style={gray!25},
+  tick label style={font=\scriptsize}, label style={font=\small}]
+\addplot+[mark=square*] coordinates {(1,6.21) (4,2.87) (15,1.74)};
+\addlegendentry{OpenFHE $2^{16}$, 32{,}768 slots}
+\addplot+[mark=triangle*] coordinates {(1,4.69) (2,3.31) (4,2.26) (8,1.88) (12,1.85) (15,1.67)};
+\addlegendentry{OpenFHE $2^{16}$, 8{,}192 slots}
+\addplot+[mark=*] coordinates {(1,5.28) (2,3.18) (4,1.45) (8,1.11) (12,0.89) (15,0.83)};
+\addlegendentry{SHIP LL14 (8{,}192 slots)}
+\addplot+[mark=diamond*] coordinates {(1,3.10) (4,0.90) (15,0.61)};
+\addlegendentry{SHIP LL13 (4{,}096 slots)}
+\end{axis}
+\end{tikzpicture}
+\Description{Log-log plot of bootstrapping latency against 1, 4 and 15 threads for SHIP LL13, SHIP LL14 and the best-tuned OpenFHE bootstrapping at N=2^16 with 32,768 and 8,192 slots. SHIP LL14 starts above OpenFHE with 8,192 slots at one thread and falls below it at 4 and 15 threads.}
+\caption{Latency versus threads (log-log) for SHIP and the best-tuned OpenFHE configurations. From 1 to 15 threads, LL14 speeds up $6.4\times$ and OpenFHE $2.8$--$3.6\times$.}
+\label{fig:scaling}
+\end{figure}
+
+\paragraph{Results}
+Table~\ref{tab:compare} and Figure~\ref{fig:scaling} show the results.
+\begin{itemize}
+\item \textbf{Latency.} Against the best OpenFHE configuration with the same $8{,}192$ slots (level budget $(3,3)$), LL14 is $0.89\times$ (slower) on one thread and $1.6\times$ and $2.0\times$ faster on $4$ and $15$ threads. Against the best full-packing configuration, it is $1.2\times$, $2.0\times$ and $2.1\times$ faster. SHIP's advantage therefore comes from parallelism: LL14 speeds up $6.4\times$ from $1$ to $15$ threads, OpenFHE $2.8$--$3.6\times$.
+\item \textbf{Precision.} OpenFHE at $N=2^{16}$ has $2.4$--$3.8$ bits more ($18.6$--$20.1$ versus $16.0$--$16.5$).
+\item \textbf{Throughput.} The best full-packing OpenFHE configuration is $3.9\times$ (one thread) and $2.2\times$ (15 threads) higher, because it refreshes four times as many slots. With equal slots, OpenFHE is $1.4\times$ higher on one thread and SHIP $1.6\times$ higher on $15$ threads.
+\item \textbf{Memory and keys.} The tuned OpenFHE configurations need $9.4$--$9.6$\,GiB RSS against $13.8$\,GiB for LL14. Serialized keys are of similar size ($9.1$--$11.1$\,GiB for OpenFHE at level budget $(2,2)$, $10.2$\,GiB for LL14), and seed compression halves LL14's to $5.1$\,GiB; the same technique would apply to OpenFHE's keys.
+\item \textbf{Ring degree.} SHIP runs at $N=2^{14}$ instead of $2^{16}$, so every operation outside bootstrapping on the same circuit is about four times cheaper in ring size; at $N=2^{15}$, OpenFHE reaches only $7$ bits in our configurations, whereas SHIP's HT15 reaches $18.3$ bits with nine levels.
+\end{itemize}
+
+\subsection{Noise flooding}
+When decryption results are shared, CKKS needs noise flooding for IND-CPA$^D$ security~\cite{LM21}.
+OpenFHE's \texttt{NOISE\_FLOODING\_DECRYPT} mode requires its own scaling configuration with scales of about $2^{55}$ or more, which is incompatible with SHIP contexts.
+We therefore emulated its computation: we estimate the noise from the imaginary parts of the bootstrapped output and add Gaussian noise of standard deviation $2^{s/2+\log_2\sqrt{12}+\text{estimate}}$ with statistical security $s=30$ and one query (OpenFHE's defaults).
+OpenFHE estimates the noise in a separate run on a different ciphertext; our data-dependent estimate is only an approximation of that procedure and is not by itself an IND-CPA$^D$-secure decryption.
+The flooding noise ($2^{21.4}$--$2^{22.2}$) is about $2^{17}$ times the output noise.
+LL13 becomes meaningless (maximum error above $500$), LL14 drops from $16.0$ to $6.7$--$6.9$ bits and HT15 from $18.3$ to $7.4$ bits; the HT14 measurement was affected by a bug in the emulation and is omitted.
+Applications that publish decryptions should raise the scale before flooding or budget for this loss.
+
+%=====================================================================
+\section{Discussion and Limitations}
+\label{sec:discussion}
+%=====================================================================
+
+\paragraph{When to use SHIP}
+On our machine, SHIP's measurable advantages over tuned OpenFHE bootstrapping are multi-threaded latency ($1.6$--$2.1\times$ at $4$--$15$ threads) and a four times smaller ring degree for the whole circuit.
+It is not faster on one thread, not more precise, not more memory-efficient, and only more throughput-efficient than OpenFHE at equal slot counts with many threads.
+The paper's larger speed-ups ($14$--$18\times$ from $1$ to $32$ cores) suggest that SHIP's advantage grows with the number of cores, which we could not test.
+
+\paragraph{Threats to validity}
+All measurements come from one laptop CPU with mixed core types, no thread pinning and a small number of runs ($3$--$5$ for latency, up to $15$ for precision); the first OpenFHE run is sometimes slower (no warm-up).
+HT14 and HT15 were measured under concurrent load with disk-backed keys.
+The baseline was tuned over level budgets, slot counts, $d_{\mathrm{num}}$ and scale sizes, but not with meta-bootstrapping, and OpenFHE's bootstrapping uses \texttt{FLEXIBLEAUTO} while SHIP uses \texttt{FIXEDMANUAL}.
+Security estimates rest on two estimator versions with one cost model and ignore memory and the windowed secret structure.
+The thread-scaling points at $2$, $8$ and $12$ threads were measured in a later session than those at $1$, $4$ and $15$, and the noise-flooding results come from an emulation.
+Finally, the implementation supports \texttt{FIXEDMANUAL}, hybrid key switching and full packing only, and has not been independently reviewed.
+
+%=====================================================================
+\section{Related Work}
+%=====================================================================
+
+Conventional CKKS bootstrapping~\cite{CHKKS18} has been improved in its linear transforms and modular reduction~\cite{HK20,BMTH21}, its failure probability and key distribution~\cite{BTH22} and its precision~\cite{BCCKK22}; OpenFHE~\cite{OpenFHE22} implements these with sparse-secret encapsulation.
+Recent low-latency designs reduce depth in different ways: bootstrapping bits~\cite{BCKS24} lowers precision requirements, SPRU~\cite{SPRU25} embeds $\Z_q$ into complex roots of unity and reports up to $5\times$ lower latency in OpenFHE for ciphertexts with few slots, and PaCo~\cite{PaCo25} reformulates decryption with blind rotations and a partial CoeffToSlot.
+SHIP~\cite{CHKS25} targets full-slot ciphertexts.
+On the security side, hybrid attacks have repeatedly lowered estimates for sparse-secret HE parameters~\cite{SC19,CP19}, and the HE security guidelines~\cite{SecGuide24} recommend checking such parameters with current tools; our findings are an instance of this pattern.
+
+%=====================================================================
+\section{Conclusion}
+%=====================================================================
+
+We implemented SHIP as an OpenFHE feature with serialization, seed-compressed and disk-backed keys, ran the four parameter sets of the paper, and made changes that a general-purpose library needs: exact rounding in ModDown at small scales and exact output scales with role-specific primes. We also showed that the published sparse-key bounds for $N=2^{13}$ and $2^{14}$ fall short of $2^{128}$ under the dual meet-in-the-middle hybrid, and that a digit-decomposed encapsulation key tightens them by $13$--$55$ bits without precision loss, which leaves the windowed secret as the binding constraint.
+Compared with OpenFHE's bootstrapping tuned with the same sparse-secret encapsulation, SHIP lowers multi-threaded latency by about $2\times$ at a four times smaller ring degree, but loses on single-thread latency, precision and throughput on our machine.
+Future work includes a security analysis of the windowed secret,  less noisy key switching at small auxiliary primes, measurements on many-core servers, and noise flooding at small scales.
+
+\ifdefined\shipanonymous\else
+\begin{acks}
+The author thanks the authors of SHIP for a detailed and reproducible description, and the OpenFHE developers.
+\end{acks}
+\fi
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{refs}
+
+\appendix
+\section{Reproducing the Results}
+\label{app:repro}
+All code, unit tests and raw logs are available\coderef\ifdefined\shipanonymous\else{} (branch \texttt{research/ship-library})\fi; the main document is \path{research/ship/LIBRARY.md}.
+\begin{itemize}
+\item \textbf{Build.} OpenFHE is configured with \path{-DWITH_REDUCED_NOISE=ON} and \path{-DNATIVE_SIZE=64}, and with \path{-DWITH_OPENMP=ON} for multi-threaded runs. \path{research/ship/run-checks.sh} builds the library and runs the checks and the SHIP unit tests.
+\item \textbf{SHIP and baseline.} \texttt{ship-paper-bench} takes a set (LL13, LL14, HT14, HT15) and a number of trials; zero trials prints only the security budget and the predicted key size. Environment variables: \texttt{SHIP\_FACTOR\_DIR} (disk-backed keys), \texttt{SHIP\_ENCAPS\_BITS} (size of $p'$), \texttt{SHIP\_SK\_ENCRYPT} (secret-key encryption), \texttt{SHIP\_SERIAL\_SIZE} (serialized key size) and \texttt{SHIP\_PROFILE} (per-phase times). \texttt{ship-baseline-bench} takes the scale bits, first-prime bits, trials, $N$, $d_{\mathrm{num}}$, level budget, secret distribution and slot count; \texttt{BASE\_SERIAL\_SIZE} prints the key size.
+\end{itemize}
+{\footnotesize
+\begin{verbatim}
+OMP_NUM_THREADS=4 ship-paper-bench LL14 5
+SHIP_FACTOR_DIR=/ssd/keys ship-paper-bench HT15 2
+OMP_NUM_THREADS=4 ship-baseline-bench \
+    59 60 3 65536 0 3 sparse_encapsulated 8192
+\end{verbatim}}
+\begin{itemize}
+\item \textbf{Security.} \path{research/ship/security/ship-estimator.sage} reproduces Table~\ref{tab:dense}; \path{estimator-versions.txt} in the same directory holds the two-version results of Table~\ref{tab:sparse}.
+\item \textbf{Logs.} \path{research/ship/results/library/quiet/} (Tables~\ref{tab:repro} and~\ref{tab:compare}), \path{research/ship/results/library/review/} (tuned baselines, profiles, key sizes, the LL13 analysis), \path{ht14-disk-t4.txt} and \path{ht15-disk-t4.txt}.
+\end{itemize}
+
+\end{document}

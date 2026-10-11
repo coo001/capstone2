@@ -1,0 +1,26 @@
+requested_depth=17
+baseline N=65536 slots=8192 depth=17 log2QP=1244 HEStd_128_classic_max_log2QP=1747 secret=sparse_encapsulated log2(q0*p0)=120 scale_bits=59 first_bits=60 levelBudget=3,3
+setup_keygen_s=11.5721
+threads=4
+trial=0 latency_s=2.77821 max_real_error=1.0216e-06 precision_bits=19.9007 levels_after=1
+trial=1 latency_s=2.67593 max_real_error=1.02886e-06 precision_bits=19.8905 levels_after=1
+trial=2 latency_s=2.70661 max_real_error=1.04526e-06 precision_bits=19.8677 levels_after=1
+summary baseline N=65536 median_latency_s=2.70661 worst_precision_bits=19.8677
+       20.06 real        59.33 user         1.81 sys
+         15017132032  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              916835  page reclaims
+                  11  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              185980  involuntary context switches
+       1194632316254  instructions retired
+        245021629930  cycles elapsed
+         15019846504  peak memory footprint

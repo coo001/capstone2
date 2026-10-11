@@ -1,0 +1,33 @@
+set=LL14 N=16384 slots=8192 log2QP=437 HEStd_128_classic_max_log2QP=438 dnum=4
+Q_bits=48 37 37 48 42 43 42 42  P_bits=50 50 
+h=31 w=264 theta=9 B=4 log2(q0*p')<=88 (estimator bound 88) May21_window_cost_log2=124.55 (>=115 required)
+estimated_ship_key_GiB=12.1782 factor_dir=(memory)
+context_s=0.0276333 keygen_s=24.1613 ship_key_in_memory_GiB=12.1787
+openmp=on max_threads=15
+threads=15
+trial=0 latency_s=0.813208 max_real_error=1.34054e-05 precision_bits=16.1868 output_limbs=3 mult_levels_after=1
+noise_flooding: estimate_log2=4.89115 flooding_std_log2=21.6836 scale_log2=37 max_real_error=0.00932483 precision_bits=6.74471
+square_then_bootstrap max_real_error=2.20751e-05 precision_bits=15.4672
+trial=1 latency_s=0.8098 max_real_error=1.10283e-05 precision_bits=16.4684 output_limbs=3 mult_levels_after=1
+trial=2 latency_s=0.833399 max_real_error=1.07008e-05 precision_bits=16.5119 output_limbs=3 mult_levels_after=1
+trial=3 latency_s=0.879966 max_real_error=1.57887e-05 precision_bits=15.9507 output_limbs=3 mult_levels_after=1
+trial=4 latency_s=0.827979 max_real_error=1.38314e-05 precision_bits=16.1417 output_limbs=3 mult_levels_after=1
+summary set=LL14 trials=5 median_latency_s=0.827979 worst_precision_bits=15.9507
+       29.38 real        78.06 user         7.10 sys
+         14799601664  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              903672  page reclaims
+                  10  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              345618  involuntary context switches
+       1271619809548  instructions retired
+        358432295630  cycles elapsed
+         14803266312  peak memory footprint

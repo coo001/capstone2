@@ -1,0 +1,33 @@
+set=LL13 N=8192 slots=4096 log2QP=218 HEStd_128_classic_max_log2QP=218 dnum=8
+Q_bits=25 20 21 26 24 23 23 24  P_bits=34 
+h=31 w=175 theta=6 B=4 encaps_digit_bits=8 log2(q0*p')<=42 (estimator bound 42) May21_window_cost_log2=117.195 (>=115 required)
+estimated_ship_key_GiB=7.9502 factor_dir=(memory)
+context_s=0.0107225 keygen_s=17.1035 ship_key_in_memory_GiB=7.95044
+openmp=on max_threads=15
+threads=15
+trial=0 latency_s=0.603063 max_real_error=0.117846 precision_bits=3.08503 vs_input_decryption_bits=4.23056 input_encryption_error=0.0956153 output_limbs=3 mult_levels_after=1
+noise_flooding: estimate_log2=4.43841 flooding_std_log2=21.2309 scale_log2=20 max_real_error=625.76 precision_bits=-9.28947
+square_then_bootstrap max_real_error=0.191715 precision_bits=2.38297
+trial=1 latency_s=0.610717 max_real_error=0.105568 precision_bits=3.24375 vs_input_decryption_bits=4.14796 input_encryption_error=0.105099 output_limbs=3 mult_levels_after=1
+trial=2 latency_s=0.610194 max_real_error=0.116776 precision_bits=3.09819 vs_input_decryption_bits=4.28293 input_encryption_error=0.0990411 output_limbs=3 mult_levels_after=1
+trial=3 latency_s=0.617847 max_real_error=0.14204 precision_bits=2.81564 vs_input_decryption_bits=4.24524 input_encryption_error=0.119028 output_limbs=3 mult_levels_after=1
+trial=4 latency_s=0.609415 max_real_error=0.133155 precision_bits=2.90882 vs_input_decryption_bits=4.1396 input_encryption_error=0.113268 output_limbs=3 mult_levels_after=1
+summary set=LL13 trials=5 median_latency_s=0.610194 worst_precision_bits=2.81564
+       20.94 real        50.53 user        11.47 sys
+          9222062080  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              563281  page reclaims
+                  10  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              353024  involuntary context switches
+        835061010222  instructions retired
+        262779952033  cycles elapsed
+          9223003000  peak memory footprint

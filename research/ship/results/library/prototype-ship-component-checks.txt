@@ -1,0 +1,32 @@
+PASS mask_oracle cases=240
+PASS hmux beta=0 rot=0 max_error=1.41246e-13 level=0
+PASS hmux beta=0 rot=3 max_error=1.18892e-13 level=0
+PASS hmux beta=0 rot=-3 max_error=1.27016e-13 level=0
+PASS hmux beta=1 rot=0 max_error=9.19382e-13 level=0
+PASS hmux beta=1 rot=3 max_error=9.28741e-13 level=0
+PASS hmux beta=1 rot=-3 max_error=8.56693e-13 level=0
+PASS blind shift=0 max_error=9.63602e-13 level=0
+PASS blind shift=3 max_error=9.89878e-13 level=0
+PASS blind shift=8 max_error=1.11022e-12 level=0
+PASS blind shift=15 max_error=1.14461e-12 level=0
+PASS hmux beta=0 rot=0 max_error=8.26711e-14 level=3
+PASS hmux beta=0 rot=3 max_error=8.38262e-14 level=3
+PASS hmux beta=0 rot=-3 max_error=1.1461e-13 level=3
+PASS hmux beta=1 rot=0 max_error=1.17401e-12 level=3
+PASS hmux beta=1 rot=3 max_error=1.14803e-12 level=3
+PASS hmux beta=1 rot=-3 max_error=1.16013e-12 level=3
+PASS blind shift=0 max_error=1.23132e-12 level=3
+PASS blind shift=3 max_error=1.20528e-12 level=3
+PASS blind shift=8 max_error=1.10344e-12 level=3
+PASS blind shift=15 max_error=1.04923e-12 level=3
+PASS hmux beta=0 rot=0 max_error=9.72962e-14 level=7
+PASS hmux beta=0 rot=3 max_error=1.3155e-13 level=7
+PASS hmux beta=0 rot=-3 max_error=1.05455e-13 level=7
+PASS hmux beta=1 rot=0 max_error=8.63999e-13 level=7
+PASS hmux beta=1 rot=3 max_error=8.59771e-13 level=7
+PASS hmux beta=1 rot=-3 max_error=8.83913e-13 level=7
+PASS blind shift=0 max_error=8.99767e-13 level=7
+PASS blind shift=3 max_error=9.1946e-13 level=7
+PASS blind shift=8 max_error=1.08576e-12 level=7
+PASS blind shift=15 max_error=1.15953e-12 level=7
+ALL COMPONENT CHECKS PASSED (toy parameters; not a security/performance claim)

@@ -1,0 +1,20 @@
+requested_depth=19
+FAIL /Users/coo/Documents/Aside/capstone2/src/pke/lib/scheme/ckksrns/ckksrns-parametergeneration.cpp:l.150:ParamsGenCKKSRNSInternal(): The specified ring dimension (65536) does not comply with HE standards recommendation (131072).
+        0.01 real         0.00 user         0.00 sys
+             5242880  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                 536  page reclaims
+                  15  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                  20  involuntary context switches
+           165842659  instructions retired
+            40103160  cycles elapsed
+             1392976  peak memory footprint

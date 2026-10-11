@@ -1,0 +1,14 @@
+set=LL14 N=16384 slots=8192 log2QP=437 HEStd_128_classic_max_log2QP=438 dnum=4
+Q_bits=48 37 37 48 42 43 42 42  P_bits=50 50 
+h=31 w=264 theta=9 B=4 encaps_digit_bits=12 log2(q0*p')<=76 (estimator bound 88) May21_window_cost_log2=124.55 (>=115 required)
+estimated_ship_key_GiB=12.1782 factor_dir=(memory)
+context_s=0.0300125 keygen_s=25.4396 ship_key_in_memory_GiB=12.1787
+openmp=on max_threads=4
+threads=4
+trial=0 latency_s=1.69181 max_real_error=1.14368e-05 precision_bits=16.416 vs_input_decryption_bits=16.4154 input_encryption_error=9.09968e-09 output_limbs=3 mult_levels_after=1
+noise_flooding: estimate_log2=4.92021 flooding_std_log2=21.7127 scale_log2=37 max_real_error=0.0083615 precision_bits=6.90202
+square_then_bootstrap max_real_error=1.76259e-05 precision_bits=15.7919
+trial=1 latency_s=1.63691 max_real_error=1.40517e-05 precision_bits=16.1189 vs_input_decryption_bits=16.1191 input_encryption_error=1.00197e-08 output_limbs=3 mult_levels_after=1
+trial=2 latency_s=1.72042 max_real_error=1.19024e-05 precision_bits=16.3584 vs_input_decryption_bits=16.3584 input_encryption_error=8.5157e-09 output_limbs=3 mult_levels_after=1
+trial=3 latency_s=1.59466 max_real_error=1.21191e-05 precision_bits=16.3324 vs_input_decryption_bits=16.3326 input_encryption_error=7.56327e-09 output_limbs=3 mult_levels_after=1
+summary set=LL14 trials=4 median_latency_s=1.69181 worst_precision_bits=16.1189

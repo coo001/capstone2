@@ -1,0 +1,33 @@
+# Windowed secret heuristic: generic sparse ternary secret with the same entropy as SHIP's
+# one-nonzero-per-window secret (h*log2(4w) bits). LL13 (N=2^13, w=175): 293.0 bits -> h_eq = 28 (294.0 bits).
+# LL14/HT14 (N=2^14, w=264): 311.4 bits -> h_eq = 27 (311.8 bits). HT15 (N=2^15, w=528): 342.4 bits -> h_eq = 27 (338.8 bits).
+# lattice-estimator d8c00b48, MATZOV cost model, sigma = 3.19, m = oo. log2(rop); mem not included.
+h=28 N=2^13 log2q=42 | bdd_mitm_hybrid | 122.0 | 56s
+h=28 N=2^13 log2q=42 | dual_mitm_hybrid | 119.2 mem=2^76.6 | 21s
+h=28 N=2^13 log2q=55 | bdd_mitm_hybrid | 114.5 | 64s
+h=28 N=2^13 log2q=55 | dual_mitm_hybrid | 110.8 mem=2^77.6 | 15s
+h=27 N=2^14 log2q=88 | bdd_mitm_hybrid | 120.0 | 101s
+h=27 N=2^14 log2q=88 | dual_mitm_hybrid | 113.5 mem=2^70.6 | 22s
+# 2026-10-11 (second session): new defaults with digit decomposition and remaining points.
+h=31 N=2^14 log2q=65 m=oo | bdd_mitm_hybrid | 139.4 | 86s
+h=31 N=2^14 log2q=65 m=oo | dual_mitm_hybrid | 135.6 mem=2^95.6 | 16s
+h=27 N=2^14 log2q=65 m=oo | bdd_mitm_hybrid | 127.9 | 79s
+h=27 N=2^14 log2q=65 m=oo | dual_mitm_hybrid | 122.5 mem=2^82.6 | 17s
+h=31 N=2^14 log2q=45 m=oo | bdd_mitm_hybrid | 150.3 | 65s
+h=31 N=2^14 log2q=45 m=oo | dual_mitm_hybrid | 147.4 mem=2^90.6 | 12s
+h=27 N=2^14 log2q=45 m=oo | bdd_mitm_hybrid | 137.2 | 67s
+h=27 N=2^14 log2q=45 m=oo | dual_mitm_hybrid | 133.6 mem=2^82.6 | 17s
+h=31 N=2^15 log2q=68 m=oo | bdd_mitm_hybrid | 161.3 | 101s
+h=31 N=2^15 log2q=68 m=oo | dual_mitm_hybrid | 155.7 mem=2^101.6 | 16s
+h=27 N=2^15 log2q=68 m=oo | bdd_mitm_hybrid | 147.0 | 98s
+h=27 N=2^15 log2q=68 m=oo | dual_mitm_hybrid | 140.7 mem=2^88.6 | 18s
+h=31 N=2^13 log2q=42 m=7n | bdd_mitm_hybrid | 129.8 | 53s
+h=31 N=2^13 log2q=42 m=7n | dual_mitm_hybrid | 127.6 mem=2^83.6 | 20s
+h=31 N=2^14 log2q=76 m=3n | bdd_mitm_hybrid | 134.6 | 95s
+h=31 N=2^14 log2q=76 m=3n | dual_mitm_hybrid | 129.0 mem=2^82.6 | 20s
+h=27 N=2^14 log2q=76 m=oo | bdd_mitm_hybrid | 123.8 | 101s
+h=27 N=2^14 log2q=76 m=oo | dual_mitm_hybrid | 118.0 mem=2^77.6 | 17s
+h=27 N=2^14 log2q=100 m=oo | bdd_mitm_hybrid | 116.5 | 116s
+h=27 N=2^14 log2q=100 m=oo | dual_mitm_hybrid | 110.6 mem=2^76.6 | 19s
+h=27 N=2^15 log2q=105 m=oo | bdd_mitm_hybrid | 136.1 | 137s
+h=27 N=2^15 log2q=105 m=oo | dual_mitm_hybrid | 128.6 mem=2^81.6 | 21s

@@ -1,0 +1,29 @@
+set=LL14 N=16384 slots=8192 log2QP=437 HEStd_128_classic_max_log2QP=438 dnum=4
+Q_bits=48 37 37 48 42 43 42 42  P_bits=50 50 
+h=31 w=264 theta=9 B=4 log2(q0*p')<=100 (paper estimator bound 100) May21_window_cost_log2=124.55 (>=115 required)
+context_s=0.0280735 keygen_s=44.0156 ship_key_payload_GiB=11.9907
+openmp=on max_threads=1
+threads=1
+trial=0 latency_s=6.08142 max_real_error=1.35892e-05 precision_bits=16.1672 output_limbs=3 mult_levels_after=1
+square_then_bootstrap max_real_error=2.58491e-05 precision_bits=15.2395
+trial=1 latency_s=5.58701 max_real_error=1.0427e-05 precision_bits=16.5493 output_limbs=3 mult_levels_after=1
+trial=2 latency_s=5.58142 max_real_error=1.52033e-05 precision_bits=16.0053 output_limbs=3 mult_levels_after=1
+summary set=LL14 trials=3 median_latency_s=5.58701 worst_precision_bits=16.0053
+       67.66 real        63.59 user         2.01 sys
+         16266182656  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              993028  page reclaims
+                  10  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              171100  involuntary context switches
+       1360674585978  instructions retired
+        269076471220  cycles elapsed
+         16270716640  peak memory footprint
