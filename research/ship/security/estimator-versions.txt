@@ -1,0 +1,76 @@
+# Sparse encapsulation key (h = 31, SparseTernary(16, 15, n)), sigma = 3.19, m = oo, MATZOV reduction cost model.
+# lattice-estimator 14a3625 (2024-09-30, cited by the SHIP paper) vs d8c00b48 (2026-08-19, current), SageMath 10.5 (mybinder).
+# bdd_mitm_hybrid = primal_hybrid(mitm=True, babai=True); dual_mitm_hybrid = lwe_dual.dual_hybrid(mitm_optimization=True).
+# Values: log2(rop); memory (mem) is reported but not included in rop. "err" = the estimator raised an exception.
+# Script: est_run.py (same logic as ship-estimator.sage), run 2026-10-11 KST.
+## est_new_13_42.txt
+root=/home/jovyan red_cost_model=<estimator.reduction.MATZOV object at 0x7ebf0e80a110>
+N=2^13 log2q=42 | dual_mitm_hybrid | 127.6 mem=2^83.6 | 21s
+DONE
+
+## est_new_13_55.txt
+root=/home/jovyan red_cost_model=<estimator.reduction.MATZOV object at 0x7a5bd0e7c490>
+N=2^13 log2q=55 | dual_mitm_hybrid | 117.7 mem=2^77.6 | 17s
+DONE
+
+## est_new_14_100.txt
+root=/home/jovyan red_cost_model=<estimator.reduction.MATZOV object at 0x78d8e2e6a0b0>
+N=2^14 log2q=100 | dual_mitm_hybrid | 119.9 mem=2^76.6 | 22s
+DONE
+
+## est_new_14_76.txt
+root=/home/jovyan red_cost_model=<estimator.reduction.MATZOV object at 0x710543cce440>
+N=2^14 log2q=76 | bdd_mitm_hybrid | 134.6 | 100s
+N=2^14 log2q=76 | dual_mitm_hybrid | 129.0 mem=2^82.6 | 21s
+DONE
+
+## est_new_14_80.txt
+root=/home/jovyan red_cost_model=<estimator.reduction.MATZOV object at 0x7f00546da170>
+N=2^14 log2q=80 | bdd_mitm_hybrid | 133.1 | 99s
+N=2^14 log2q=80 | dual_mitm_hybrid | 127.3 mem=2^76.6 | 21s
+DONE
+
+## est_new_14_88.txt
+root=/home/jovyan red_cost_model=<estimator.reduction.MATZOV object at 0x7baa5cf7a260>
+N=2^14 log2q=88 | dual_mitm_hybrid | 125.2 mem=2^88.6 | 19s
+DONE
+
+## est_new_15_105.txt
+root=/home/jovyan red_cost_model=<estimator.reduction.MATZOV object at 0x754665356200>
+N=2^15 log2q=105 | dual_mitm_hybrid | 141.3 mem=2^82.6 | 27s
+DONE
+
+## est_old_13_42.txt
+root=/home/jovyan/old red_cost_model=<estimator.reduction.MATZOV object at 0x7149ee183910>
+N=2^13 log2q=42 | bdd_mitm_hybrid | err:RuntimeError:β = 72 > d = -2598 | 28s
+N=2^13 log2q=42 | dual_mitm_hybrid | 126.8 mem=2^88.6 | 15s
+DONE
+
+## est_old_14_100.txt
+root=/home/jovyan/old red_cost_model=<estimator.reduction.MATZOV object at 0x762be33e7850>
+N=2^14 log2q=100 | bdd_mitm_hybrid | 156.1 | 70s
+N=2^14 log2q=100 | dual_mitm_hybrid | 119.1 mem=2^76.6 | 20s
+DONE
+
+## est_old_14_76.txt
+root=/home/jovyan/old red_cost_model=<estimator.reduction.MATZOV object at 0x72269e743a00>
+N=2^14 log2q=76 | dual_mitm_hybrid | 128.1 mem=2^82.6 | 22s
+DONE
+
+## est_old_14_80.txt
+root=/home/jovyan/old red_cost_model=<estimator.reduction.MATZOV object at 0x7bed58fbb550>
+N=2^14 log2q=80 | dual_mitm_hybrid | 129.7 mem=2^96.6 | 9s
+DONE
+
+## est_old_14_88.txt
+root=/home/jovyan/old red_cost_model=<estimator.reduction.MATZOV object at 0x71f4c6e77910>
+N=2^14 log2q=88 | bdd_mitm_hybrid | err:RuntimeError:β = 107 > d = -4752 | 45s
+N=2^14 log2q=88 | dual_mitm_hybrid | 123.5 mem=2^77.6 | 21s
+DONE
+
+## est_old_15_105.txt
+root=/home/jovyan/old red_cost_model=<estimator.reduction.MATZOV object at 0x7359445df820>
+N=2^15 log2q=105 | bdd_mitm_hybrid | err:RuntimeError:β = 75 > d = -13610 | 101s
+N=2^15 log2q=105 | dual_mitm_hybrid | 140.8 mem=2^94.6 | 22s
+DONE
+
