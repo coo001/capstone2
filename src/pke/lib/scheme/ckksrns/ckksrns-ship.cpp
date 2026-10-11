@@ -45,7 +45,10 @@
 #include "cereal/types/string.hpp"
 
 #include <array>
+#include <chrono>
 #include <cmath>
+#include <cstdlib>
+#include <iostream>
 #include <complex>
 #include <filesystem>
 #include <fstream>
@@ -780,6 +783,15 @@ void ComputeColumnPermutations(SHIPBootstrapKey& key, uint32_t offset, uint32_t 
     }
 }
 
+// SHIP_PROFILE (environment): print the time of each bootstrapping phase to stderr.
+bool ProfileEnabled() {
+    static const bool enabled = std::getenv("SHIP_PROFILE") != nullptr;
+    return enabled;
+}
+double SecondsSince(std::chrono::steady_clock::time_point t0) {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+}
+
 // Algorithm 1 with Algorithm 4 (column + mux) and masks over PQ (Sections 4.1, 4.4): no masking level.
 CT HalfBootstrap(const CC& cc, const CT& input, const SHIPBootstrapKey& key, double gamma) {
     const auto params     = CkksParams(cc);
@@ -840,6 +852,7 @@ CT HalfBootstrap(const CC& cc, const CT& input, const SHIPBootstrapKey& key, dou
     const uint32_t m  = 2 * cc->GetRingDimension();
     std::vector<CT> factors(key.numFactors + 1);
     factors[0] = trivial;
+    const auto tFactors = std::chrono::steady_clock::now();
 #pragma omp parallel for schedule(dynamic)
     for (uint32_t f = 0; f < key.numFactors; ++f) {
         const auto fk = GetFactor(cc, key, f);
@@ -859,9 +872,17 @@ CT HalfBootstrap(const CC& cc, const CT& input, const SHIPBootstrapKey& key, dou
         auto selected  = scheme->KeySwitchDown(extended);  // Rescale_P: level stays 0
         factors[f + 1] = MuxRotate(cc, fk->mux, selected);
     }
-    auto root      = ProductTree(cc, std::move(factors));
-    auto conjugate = ApplyAutomorphism(cc, root, key.conjugation);
-    return cc->EvalAdd(root, conjugate);
+    const double factorSeconds = SecondsSince(tFactors);
+    const auto tTree           = std::chrono::steady_clock::now();
+    auto root                  = ProductTree(cc, std::move(factors));
+    const double treeSeconds   = SecondsSince(tTree);
+    const auto tConj           = std::chrono::steady_clock::now();
+    auto conjugate             = ApplyAutomorphism(cc, root, key.conjugation);
+    auto result                = cc->EvalAdd(root, conjugate);
+    if (ProfileEnabled())
+        std::cerr << "ship_profile factors_s=" << factorSeconds << " tree_s=" << treeSeconds
+                  << " conjugate_s=" << SecondsSince(tConj) << std::endl;
+    return result;
 }
 
 std::mutex& KeyStoreMutex() {
@@ -878,7 +899,10 @@ uint32_t SparseSecretBound(uint32_t ringDim) {
     // The paper (Section 5.2) gives 55, 100, 105 for N = 2^13, 2^14, 2^15. The lattice estimator
     // (commit d8c00b48, 2026-08-19, LWE.estimate attacks) gives 2^121.4 and 2^126.2 for the first two
     // (bdd_mitm_hybrid), so the bounds below are the estimator values: 42 -> 2^129.8, 88 -> 2^130.2,
-    // 105 -> 2^148.7 (research/ship/security).
+    // 105 -> 2^148.7 (research/ship/security). Under the dual meet-in-the-middle hybrid (not in the default
+    // attack set; rop ignores memory) 42 and 88 give 2^126.8..2^127.6 and 2^123.5..2^125.2 in the estimator
+    // versions 14a3625 and d8c00b48. A 2^128 bound under that attack needs 76 bits for N = 2^14 (LL14 then has
+    // about 8 bits of precision) and is not reachable for LL13; set encapsulationModBits to choose it.
     switch (ringDim) {
         case 1 << 13:
             return 42;
@@ -1281,8 +1305,13 @@ Ciphertext<DCRTPoly> SHIPBootstrap(ConstCiphertext<DCRTPoly>& ciphertext, const 
     auto ct = ciphertext->Clone();
     if (towers > 2)
         cc->LevelReduceInPlace(ct, nullptr, towers - 2);
+    const auto tS2C    = std::chrono::steady_clock::now();
     auto coefficients  = ApplyPacking(cc, ct, key.packing, S);  // S2C: one level, now at q0
+    const double s2cSeconds = SecondsSince(tS2C);
+    const auto tEnc    = std::chrono::steady_clock::now();
     auto sparse        = Encapsulate(coefficients, key);
+    if (ProfileEnabled())
+        std::cerr << "ship_profile s2c_s=" << s2cSeconds << " encapsulate_s=" << SecondsSince(tEnc) << std::endl;
     const double q0    = sparse->GetElements()[0].GetElementAtIndex(0).GetModulus().ConvertToDouble();
     const double gamma = q0 / sparse->GetScalingFactor();
     auto real          = HalfBootstrap(cc, sparse, key, gamma);
